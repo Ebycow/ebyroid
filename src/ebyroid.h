@@ -38,15 +38,19 @@ class Ebyroid {
 
 class Response {
  public:
-  Response(ApiAdapter* adapter) : api_adapter_(adapter) {}
+  explicit Response(ApiAdapter* adapter);
+  ~Response();
   void Write(char* bytes, uint32_t size);
   void Write16(int16_t* shorts, uint32_t size);
   std::vector<unsigned char> End();
   std::vector<int16_t> End16();
+  void WaitForCompletion();
+  bool SignalCompletion();
   ApiAdapter* api_adapter() { return api_adapter_; };
 
  private:
   ApiAdapter* api_adapter_;
+  void* completion_event_;
   std::vector<unsigned char> buffer_;
   std::vector<int16_t> buffer_16_;
 };

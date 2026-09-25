@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <stdexcept>
 #include <string>
 
@@ -38,23 +39,15 @@ int Ebyroid::Hiragana(const unsigned char* inbytes, unsigned char** outbytes, si
   if (api_adapter_ == nullptr) {
     throw std::runtime_error("VOICEROID API is not initialized");
   }
-  Response* const response = new Response(api_adapter_);
+  std::unique_ptr<Response> response(new Response(api_adapter_));
 
   TJobParam param;
   param.mode_in_out = IOMODE_PLAIN_TO_AIKANA;
-  param.user_data = response;
-
-  char eventname[32];
-  std::sprintf(eventname, "TTKLOCK:%p", response);
-
-  HANDLE event = CreateEventA(NULL, TRUE, FALSE, eventname);
+  param.user_data = response.get();
 
   int32_t job_id;
   if (ResultCode result = api_adapter_->TextToKana(&job_id, &param, (const char*) inbytes);
       result != ERR_SUCCESS) {
-    delete response;
-    ResetEvent(event);
-    CloseHandle(event);
     static constexpr char* format = "TextToKana failed with the result code %d\n"
                                     "Given inbytes: %s";
     char m[0xFFFF];
@@ -62,13 +55,10 @@ int Ebyroid::Hiragana(const unsigned char* inbytes, unsigned char** outbytes, si
     throw std::runtime_error(m);
   }
 
-  WaitForSingleObject(event, INFINITE);
-  ResetEvent(event);
-  CloseHandle(event);
+  response->WaitForCompletion();
 
   // finalize
   if (ResultCode result = api_adapter_->CloseKana(job_id); result != ERR_SUCCESS) {
-    delete response;
     throw std::runtime_error("wtf");
   }
 
@@ -79,7 +69,6 @@ int Ebyroid::Hiragana(const unsigned char* inbytes, unsigned char** outbytes, si
   std::copy(buffer.begin(), buffer.end(), *outbytes);
   *(*outbytes + buffer.size()) = '\0';
 
-  delete response;
   return 0;
 }
 
@@ -90,22 +79,15 @@ int Ebyroid::Speech(const unsigned char* inbytes,
   if (api_adapter_ == nullptr) {
     throw std::runtime_error("VOICEROID API is not initialized");
   }
-  Response* const response = new Response(api_adapter_);
+  std::unique_ptr<Response> response(new Response(api_adapter_));
 
   TJobParam param;
   param.mode_in_out = mode == 0u ? IOMODE_AIKANA_TO_WAVE : (JobInOut) mode;
-  param.user_data = response;
-
-  char eventname[32];
-  sprintf(eventname, "TTSLOCK:%p", response);
-  HANDLE event = CreateEventA(NULL, TRUE, FALSE, eventname);
+  param.user_data = response.get();
 
   int32_t job_id;
   if (ResultCode result = api_adapter_->TextToSpeech(&job_id, &param, (const char*) inbytes);
       result != ERR_SUCCESS) {
-    delete response;
-    ResetEvent(event);
-    CloseHandle(event);
     static constexpr char* format = "TextToSpeech failed with the result code %d\n"
                                     "Given inbytes: %s";
     char m[0xFFFF];
@@ -113,13 +95,10 @@ int Ebyroid::Speech(const unsigned char* inbytes,
     throw std::runtime_error(m);
   }
 
-  WaitForSingleObject(event, INFINITE);
-  ResetEvent(event);
-  CloseHandle(event);
+  response->WaitForCompletion();
 
   // finalize
   if (ResultCode result = api_adapter_->CloseSpeech(job_id); result != ERR_SUCCESS) {
-    delete response;
     throw std::runtime_error("wtf");
   }
 
@@ -130,7 +109,6 @@ int Ebyroid::Speech(const unsigned char* inbytes,
   std::copy(buffer.begin(), buffer.end(), *outbytes);
   *((char*) *outbytes + (buffer.size() * 2)) = '\0';
 
-  delete response;
   return 0;
 }
 
@@ -147,6 +125,21 @@ int Ebyroid::Convert(const ConvertParams& params,
   return Speech(inbytes, outbytes, outsize, IOMODE_PLAIN_TO_WAVE);
 };
 
+Response::Response(ApiAdapter* adapter)
+    : api_adapter_(adapter), completion_event_(CreateEventA(NULL, TRUE, FALSE, NULL)) {
+  if (completion_event_ == NULL) {
+    string message = "CreateEvent failed with code ";
+    message += std::to_string(GetLastError());
+    throw std::runtime_error(message);
+  }
+}
+
+Response::~Response() {
+  if (completion_event_ != NULL) {
+    CloseHandle((HANDLE) completion_event_);
+  }
+}
+
 void Response::Write(char* bytes, uint32_t size) {
   buffer_.insert(std::end(buffer_), bytes, bytes + size);
 }
@@ -161,6 +154,19 @@ vector<unsigned char> Response::End() {
 
 vector<int16_t> Response::End16() {
   return std::move(buffer_16_);
+}
+
+void Response::WaitForCompletion() {
+  if (DWORD result = WaitForSingleObject((HANDLE) completion_event_, INFINITE);
+      result != WAIT_OBJECT_0) {
+    string message = "WaitForSingleObject failed with code ";
+    message += std::to_string(GetLastError());
+    throw std::runtime_error(message);
+  }
+}
+
+bool Response::SignalCompletion() {
+  return SetEvent((HANDLE) completion_event_) != FALSE;
 }
 
 namespace {
@@ -272,10 +278,9 @@ int __stdcall HiraganaCallback(EventReasonCode reason_code, int32_t job_id, IntP
   delete[] buffer;
 
   if (reason_code == TEXTBUF_CLOSE) {
-    char eventname[32];
-    sprintf(eventname, "TTKLOCK:%p", response);
-    HANDLE event = OpenEventA(EVENT_ALL_ACCESS, FALSE, eventname);
-    SetEvent(event);
+    if (!response->SignalCompletion()) {
+      Eprintf("SetEvent failed with code %d", GetLastError());
+    }
   }
   return 0;
 }
@@ -308,10 +313,9 @@ int __stdcall SpeechCallback(EventReasonCode reason_code,
   delete[] buffer;
 
   if (reason_code == RAWBUF_CLOSE) {
-    char eventname[32];
-    sprintf(eventname, "TTSLOCK:%p", response);
-    HANDLE event = OpenEventA(EVENT_ALL_ACCESS, FALSE, eventname);
-    SetEvent(event);
+    if (!response->SignalCompletion()) {
+      Eprintf("SetEvent failed with code %d", GetLastError());
+    }
   }
   return 0;
 }
