@@ -181,6 +181,11 @@ static napi_value do_async_work(napi_env env, napi_callback_info info, work_type
   napi_status status;
   napi_valuetype valuetype;
 
+  if (module == nullptr || module->ebyroid == nullptr) {
+    napi_throw_error(env, "EBY002", "ebyroid native module has not been initialized");
+    return NULL;
+  }
+
   size_t argc = 3;
   napi_value argv[3];
   status = napi_get_cb_info(env, info, &argc, argv, NULL, NULL);
@@ -339,7 +344,7 @@ static napi_value export_func_reinterpret(napi_env env, napi_callback_info info)
 // JS Signature: init(baseDir: string, voice: string, volume: number) -> none
 //
 static napi_value export_func_init(napi_env env, napi_callback_info info) {
-  if (module->ebyroid == NULL) {
+  if (module->ebyroid != NULL) {
     return NULL;
   }
 
@@ -388,14 +393,17 @@ static napi_value export_func_init(napi_env env, napi_callback_info info) {
   // initialize ebyroid
   try {
     module->ebyroid = Ebyroid::Create(install_dir_buffer, voice_dir_buffer, (float) volume);
-  } catch (std::exception& e) {
-    const char* location = "(ebyroid::Ebyroid::Create)";
-    napi_fatal_error(location, strlen(location), e.what(), strlen(e.what()));
+  } catch (const std::exception& e) {
+    free(install_dir_buffer);
+    free(voice_dir_buffer);
+    napi_throw_error(env, "EBY003", e.what());
+    return NULL;
+  } catch (...) {
+    free(install_dir_buffer);
+    free(voice_dir_buffer);
+    napi_throw_error(env, "EBY003", "unknown error while initializing ebyroid native module");
+    return NULL;
   }
-
-  // finalize ebyroid in the cleanup hook
-  status = napi_add_env_cleanup_hook(env, [](void* arg) { delete module->ebyroid; }, NULL);
-  en_assert(status == napi_ok);
 
   free(install_dir_buffer);
   free(voice_dir_buffer);
@@ -414,10 +422,17 @@ static napi_value module_main(napi_env env, napi_value exports) {
   napi_status status = napi_define_properties(env, exports, sizeof(props) / sizeof(*props), props);
   en_assert(status == napi_ok);
 
-  module = (module_context*) malloc(sizeof(*module));
+  module = new module_context{nullptr};
 
-  // clean heap in the cleanup hook
-  status = napi_add_env_cleanup_hook(env, [](void* arg) { free(module); }, NULL);
+  // Finalize the native API before releasing the per-module state.
+  status = napi_add_env_cleanup_hook(
+      env,
+      [](void* arg) {
+        module_context* context = (module_context*) arg;
+        delete context->ebyroid;
+        delete context;
+      },
+      module);
   en_assert(status == napi_ok);
 
   return exports;
