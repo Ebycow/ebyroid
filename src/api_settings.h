@@ -7,7 +7,6 @@
 
 namespace ebyroid {
 
-static constexpr size_t kMaxPathSize = 0xFF;
 static constexpr int32_t kFrequency44 = 0xAC44;
 static constexpr int32_t kFrequency22 = 0x5622;
 static constexpr char* kDllFilename = "aitalked.dll";
@@ -15,12 +14,12 @@ static constexpr char* kLicFilename = "aitalk.lic";
 static constexpr char* kWinDelimit = "\\";
 
 struct Settings {
-  char base_dir[kMaxPathSize];
-  char dll_path[kMaxPathSize];
-  char voice_dir[kMaxPathSize];
-  char voice_name[16];
-  char language_dir[kMaxPathSize];
-  char license_path[kMaxPathSize];
+  std::string base_dir;
+  std::string dll_path;
+  std::string voice_dir;
+  std::string voice_name;
+  std::string language_dir;
+  std::string license_path;
   const char* seed;
   uint32_t frequency;
 };

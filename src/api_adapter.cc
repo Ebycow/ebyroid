@@ -1,5 +1,6 @@
 #include "api_adapter.h"
 
+#include <memory>
 #include <stdexcept>
 
 #include <Windows.h>
@@ -14,7 +15,6 @@ template <class T>
 inline T LoadProc(const HINSTANCE& handle, const char* proc_name) {
   FARPROC proc = GetProcAddress(handle, proc_name);
   if (proc == nullptr) {
-    FreeLibrary(handle);
     char m[64];
     std::snprintf(m, 64, "Could not find '%s' in the library.", proc_name);
     throw std::runtime_error(m);
@@ -31,18 +31,11 @@ ApiAdapter* ApiAdapter::Create(const char* base_dir, const char* dll_path) {
                   128,
                   "SetDllDirectory failed with code %d (Check out the voiceroid path setting)",
                   GetLastError());
-    throw new std::runtime_error(m);
+    throw std::runtime_error(m);
   }
 
   HINSTANCE handle = LoadLibraryA(dll_path);
-  if (handle == nullptr) {
-    char m[128];
-    std::snprintf(m,
-                  128,
-                  "LoadLibrary failed with code %d (Check out the voiceroid path setting)",
-                  GetLastError());
-    throw new std::runtime_error(m);
-  }
+  DWORD load_error = handle == nullptr ? GetLastError() : ERROR_SUCCESS;
 
   if (BOOL ok = SetDllDirectoryA(nullptr); !ok) {
     // this should not be so critical
@@ -50,7 +43,16 @@ ApiAdapter* ApiAdapter::Create(const char* base_dir, const char* dll_path) {
     Eprintf("albeit the program will go on ignoring this error.");
   }
 
-  ApiAdapter* adapter = new ApiAdapter(handle);
+  if (handle == nullptr) {
+    char m[128];
+    std::snprintf(m,
+                  128,
+                  "LoadLibrary failed with code %d (Check out the voiceroid path setting)",
+                  load_error);
+    throw std::runtime_error(m);
+  }
+
+  std::unique_ptr<ApiAdapter> adapter(new ApiAdapter(handle));
   adapter->init_ = LoadProc<ApiInit>(handle, "_AITalkAPI_Init@4");
   adapter->end_ = LoadProc<ApiEnd>(handle, "_AITalkAPI_End@0");
   adapter->voice_load_ = LoadProc<ApiVoiceLoad>(handle, "_AITalkAPI_VoiceLoad@4");
@@ -65,7 +67,7 @@ ApiAdapter* ApiAdapter::Create(const char* base_dir, const char* dll_path) {
   adapter->close_speech_ = LoadProc<ApiCloseSpeech>(handle, "_AITalkAPI_CloseSpeech@8");
   adapter->get_data_ = LoadProc<ApiGetData>(handle, "_AITalkAPI_GetData@16");
 
-  return adapter;
+  return adapter.release();
 }
 
 ApiAdapter::~ApiAdapter() {

@@ -162,13 +162,13 @@ ApiAdapter* NewAdapter(const string& base_dir, const string& voice, float volume
   SettingsBuilder builder(base_dir, voice);
   Settings settings = builder.Build();
 
-  ApiAdapter* adapter = ApiAdapter::Create(settings.base_dir, settings.dll_path);
+  ApiAdapter* adapter = ApiAdapter::Create(settings.base_dir.c_str(), settings.dll_path.c_str());
 
   TConfig config;
   config.hz_voice_db = settings.frequency;
   config.msec_timeout = 1000;
-  config.path_license = settings.license_path;
-  config.dir_voice_dbs = settings.voice_dir;
+  config.path_license = settings.license_path.c_str();
+  config.dir_voice_dbs = settings.voice_dir.c_str();
   config.code_auth_seed = settings.seed;
   config.len_auth_seed = kLenSeedValue;
 
@@ -179,8 +179,9 @@ ApiAdapter* NewAdapter(const string& base_dir, const string& voice, float volume
     throw std::runtime_error(message);
   }
 
-  auto [is_error, what] = WithDirecory(settings.base_dir, [adapter, settings]() {
-    if (ResultCode result = adapter->LangLoad(settings.language_dir); result != ERR_SUCCESS) {
+  auto [is_error, what] = WithDirecory(settings.base_dir.c_str(), [adapter, settings]() {
+    if (ResultCode result = adapter->LangLoad(settings.language_dir.c_str());
+        result != ERR_SUCCESS) {
       char m[64];
       std::snprintf(m, 64, "API LangLoad failed (could not load language) with code %d", result);
       return pair(true, string(m));
@@ -192,7 +193,7 @@ ApiAdapter* NewAdapter(const string& base_dir, const string& voice, float volume
     throw std::runtime_error(what);
   }
 
-  if (ResultCode result = adapter->VoiceLoad(settings.voice_name); result != ERR_SUCCESS) {
+  if (ResultCode result = adapter->VoiceLoad(settings.voice_name.c_str()); result != ERR_SUCCESS) {
     delete adapter;
     string message = "API Load Voice failed (Could not load voice data) with code ";
     message += std::to_string(result);
