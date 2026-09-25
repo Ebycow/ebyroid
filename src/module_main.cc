@@ -28,53 +28,58 @@ typedef struct {
 
 static module_context* module;
 
+static void set_work_error(work_data* work, const char* message) {
+  size_t size = strlen(message);
+  char* what = (char*) malloc(size + 1);
+  if (what == NULL) {
+    return;
+  }
+  strcpy(what, message);
+  work->error_message = what;
+  work->error_size = size;
+}
+
 static void async_work_on_execute(napi_env env, void* data) {
-  int result;
-  napi_status status;
   work_data* work = (work_data*) data;
 
   switch (work->worktype) {
     case WORK_HIRAGANA:
       try {
         unsigned char* out;
-        result = module->ebyroid->Hiragana(work->input, &out, &work->output_size);
+        module->ebyroid->Hiragana(work->input, &out, &work->output_size);
         work->output = out;
-      } catch (std::exception& e) {
+      } catch (const std::exception& e) {
         Eprintf("(Ebyroid::Hiragana) %s", e.what());
-        size_t size = strlen(e.what());
-        char* what = (char*) malloc(size + 1);
-        strcpy(what, e.what());
-        work->error_message = what;
-        work->error_size = size;
+        set_work_error(work, e.what());
+      } catch (...) {
+        Eprintf("(Ebyroid::Hiragana) unknown native exception");
+        set_work_error(work, "unknown native exception in Ebyroid::Hiragana");
       }
       break;
     case WORK_SPEECH:
       try {
         int16_t* out;
-        result = module->ebyroid->Speech(work->input, &out, &work->output_size);
+        module->ebyroid->Speech(work->input, &out, &work->output_size);
         work->output = out;
-      } catch (std::exception& e) {
+      } catch (const std::exception& e) {
         Eprintf("(Ebyroid::Speech) %s", e.what());
-        size_t size = strlen(e.what());
-        char* what = (char*) malloc(size + 1);
-        strcpy(what, e.what());
-        work->error_message = what;
-        work->error_size = size;
+        set_work_error(work, e.what());
+      } catch (...) {
+        Eprintf("(Ebyroid::Speech) unknown native exception");
+        set_work_error(work, "unknown native exception in Ebyroid::Speech");
       }
       break;
     case WORK_CONVERT:
       try {
         int16_t* out;
-        result =
-            module->ebyroid->Convert(*work->convert_params, work->input, &out, &work->output_size);
+        module->ebyroid->Convert(*work->convert_params, work->input, &out, &work->output_size);
         work->output = out;
-      } catch (std::exception& e) {
+      } catch (const std::exception& e) {
         Eprintf("(Ebyroid::Convert) %s", e.what());
-        size_t size = strlen(e.what());
-        char* what = (char*) malloc(size + 1);
-        strcpy(what, e.what());
-        work->error_message = what;
-        work->error_size = size;
+        set_work_error(work, e.what());
+      } catch (...) {
+        Eprintf("(Ebyroid::Convert) unknown native exception");
+        set_work_error(work, "unknown native exception in Ebyroid::Convert");
       }
       break;
   }
@@ -190,6 +195,10 @@ static napi_value do_async_work(napi_env env, napi_callback_info info, work_type
   napi_value argv[3];
   status = napi_get_cb_info(env, info, &argc, argv, NULL, NULL);
   en_assert(status == napi_ok);
+  if (argc < 3) {
+    napi_throw_type_error(env, "EBY004", "expected input, options and callback arguments");
+    return NULL;
+  }
 
   // first arg must be buffer
   bool is_buffer;
@@ -208,6 +217,7 @@ static napi_value do_async_work(napi_env env, napi_callback_info info, work_type
   unsigned char* node_buffer_data;
   size_t node_buffer_size;
   status = napi_get_buffer_info(env, argv[0], (void**) &node_buffer_data, &node_buffer_size);
+  en_assert(status == napi_ok);
 
   // allocate
   unsigned char* buffer = (unsigned char*) malloc(node_buffer_size + 1);
@@ -223,7 +233,7 @@ static napi_value do_async_work(napi_env env, napi_callback_info info, work_type
   ConvertParams* params = NULL;
   if (is_param) {
     napi_value value;
-    params = (ConvertParams*) malloc(sizeof(*params));
+    params = (ConvertParams*) calloc(1, sizeof(*params));
 
     // fetch .needs_reload boolean
     status = napi_get_named_property(env, argv[1], "needs_reload", &value);
@@ -270,6 +280,12 @@ static napi_value do_async_work(napi_env env, napi_callback_info info, work_type
     }
   }
 
+  if (worktype == WORK_CONVERT && params == NULL) {
+    free(buffer);
+    napi_throw_type_error(env, "EBY004", "convert options must include needs_reload");
+    return NULL;
+  }
+
   char* workname;
   switch (worktype) {
     case WORK_HIRAGANA:
@@ -295,7 +311,7 @@ static napi_value do_async_work(napi_env env, napi_callback_info info, work_type
   en_assert(status == napi_ok);
 
   // create working data
-  work_data* work = (work_data*) malloc(sizeof(*work));
+  work_data* work = (work_data*) calloc(1, sizeof(*work));
   work->input = buffer;
   work->input_size = node_buffer_size;
   work->javascript_callback_ref = callback_ref;
