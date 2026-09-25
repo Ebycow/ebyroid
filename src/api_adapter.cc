@@ -71,25 +71,51 @@ ApiAdapter* ApiAdapter::Create(const char* base_dir, const char* dll_path) {
 }
 
 ApiAdapter::~ApiAdapter() {
+  if (voice_loaded_) {
+    if (ResultCode result = VoiceClear(); result != ERR_SUCCESS) {
+      Eprintf("AITalkAPI_VoiceClear failed during cleanup with code %d", result);
+    }
+  }
+  if (initialized_) {
+    if (ResultCode result = End(); result != ERR_SUCCESS) {
+      Eprintf("AITalkAPI_End failed during cleanup with code %d", result);
+    }
+  }
   if (BOOL result = FreeLibrary(dll_instance_); !result) {
     Eprintf("FreeLibrary(HMODULE) failed. Though the program will go on, may lead to fatal error.");
   }
 }
 
 ResultCode ApiAdapter::Init(TConfig* config) {
-  return init_(config);
+  ResultCode result = init_(config);
+  if (result == ERR_SUCCESS) {
+    initialized_ = true;
+  }
+  return result;
 }
 
 ResultCode ApiAdapter::End() {
-  return end_();
+  ResultCode result = end_();
+  if (result == ERR_SUCCESS) {
+    initialized_ = false;
+  }
+  return result;
 }
 
 ResultCode ApiAdapter::VoiceLoad(const char* voice_name) {
-  return voice_load_(voice_name);
+  ResultCode result = voice_load_(voice_name);
+  if (result == ERR_SUCCESS) {
+    voice_loaded_ = true;
+  }
+  return result;
 }
 
 ResultCode ApiAdapter::VoiceClear() {
-  return voice_clear_();
+  ResultCode result = voice_clear_();
+  if (result == ERR_SUCCESS) {
+    voice_loaded_ = false;
+  }
+  return result;
 }
 
 ResultCode ApiAdapter::SetParam(IntPtr p_param) {

@@ -35,6 +35,9 @@ Ebyroid* Ebyroid::Create(const string& base_dir, const string& voice, float volu
 }
 
 int Ebyroid::Hiragana(const unsigned char* inbytes, unsigned char** outbytes, size_t* outsize) {
+  if (api_adapter_ == nullptr) {
+    throw std::runtime_error("VOICEROID API is not initialized");
+  }
   Response* const response = new Response(api_adapter_);
 
   TJobParam param;
@@ -84,6 +87,9 @@ int Ebyroid::Speech(const unsigned char* inbytes,
                     int16_t** outbytes,
                     size_t* outsize,
                     uint32_t mode) {
+  if (api_adapter_ == nullptr) {
+    throw std::runtime_error("VOICEROID API is not initialized");
+  }
   Response* const response = new Response(api_adapter_);
 
   TJobParam param;
@@ -134,6 +140,7 @@ int Ebyroid::Convert(const ConvertParams& params,
                      size_t* outsize) {
   if (params.needs_reload) {
     delete api_adapter_;
+    api_adapter_ = nullptr;
     api_adapter_ = NewAdapter(params.base_dir, params.voice, params.volume);
   }
 

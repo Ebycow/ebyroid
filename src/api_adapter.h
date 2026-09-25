@@ -194,6 +194,8 @@ class ApiAdapter {
   typedef ResultCode(__stdcall* ApiGetData)(int32_t, int16_t*, uint32_t, uint32_t*);
 
   HINSTANCE dll_instance_ = nullptr;
+  bool initialized_ = false;
+  bool voice_loaded_ = false;
 
   ApiInit init_;
   ApiEnd end_;
