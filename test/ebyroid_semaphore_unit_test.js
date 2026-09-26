@@ -1,6 +1,7 @@
 /* eslint-disable no-console, no-underscore-dangle */
 const assert = require('assert').strict;
 const Module = require('module');
+const { once } = require('events');
 
 const fakeNative = {
   mode: 'success',
@@ -14,6 +15,19 @@ const fakeNative = {
         callback(new Error('voice reload failed'));
       } else {
         callback(null, new Int16Array([0, 1]));
+      }
+    });
+  },
+  convertStream(input, options, callback) {
+    if (this.mode === 'throw') {
+      throw new Error('synchronous native failure');
+    }
+    setImmediate(() => {
+      if (this.mode === 'reload-error' && options.needs_reload) {
+        callback(new Error('voice reload failed'), null);
+      } else {
+        callback(null, Buffer.from([0, 0]));
+        callback(null, null);
       }
     });
   },
@@ -76,6 +90,12 @@ async function main() {
 
   fakeNative.mode = 'success';
   await withTimeout(ebyroid.convertEx('lock was released', 'a'));
+
+  const pcm = await withTimeout(ebyroid.convertStream('streamed'));
+  const chunks = [];
+  pcm.on('data', chunk => chunks.push(chunk));
+  await withTimeout(once(pcm, 'end'));
+  assert.deepEqual(Buffer.concat(chunks), Buffer.from([0, 0]));
 }
 
 main().catch(err => {

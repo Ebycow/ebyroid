@@ -11,7 +11,16 @@ typedef struct {
   Ebyroid* ebyroid;
 } module_context;
 
-typedef enum { WORK_HIRAGANA, WORK_SPEECH, WORK_CONVERT } work_type;
+typedef enum { WORK_HIRAGANA, WORK_SPEECH, WORK_CONVERT, WORK_CONVERT_STREAM } work_type;
+
+typedef enum { STREAM_CHUNK, STREAM_END, STREAM_ERROR } stream_event_type;
+
+typedef struct {
+  stream_event_type type;
+  void* data;
+  size_t size;
+  char* error_message;
+} stream_event;
 
 typedef struct {
   work_type worktype;
@@ -21,6 +30,7 @@ typedef struct {
   size_t output_size;
   napi_async_work self;
   napi_ref javascript_callback_ref;
+  napi_threadsafe_function stream_callback;
   char* error_message;
   size_t error_size;
   ConvertParams* convert_params;
@@ -37,6 +47,93 @@ static void set_work_error(work_data* work, const char* message) {
   strcpy(what, message);
   work->error_message = what;
   work->error_size = size;
+}
+
+static void free_stream_event(stream_event* event) {
+  if (event == NULL) {
+    return;
+  }
+  free(event->data);
+  free(event->error_message);
+  free(event);
+}
+
+static void call_stream_callback(napi_env env,
+                                 napi_value javascript_callback,
+                                 void* context,
+                                 void* data) {
+  (void) context;
+  stream_event* event = (stream_event*) data;
+  if (env == NULL || javascript_callback == NULL) {
+    free_stream_event(event);
+    return;
+  }
+
+  napi_status status;
+  napi_value undefined, null_value, argv[2];
+  status = napi_get_undefined(env, &undefined);
+  e_assert(status == napi_ok);
+  status = napi_get_null(env, &null_value);
+  e_assert(status == napi_ok);
+
+  argv[0] = null_value;
+  argv[1] = null_value;
+  if (event->type == STREAM_CHUNK) {
+    status = napi_create_buffer_copy(env, event->size, event->data, NULL, &argv[1]);
+    e_assert(status == napi_ok);
+  } else if (event->type == STREAM_ERROR) {
+    napi_value message;
+    status = napi_create_string_utf8(
+        env, event->error_message, NAPI_AUTO_LENGTH, &message);
+    e_assert(status == napi_ok);
+    status = napi_create_error(env, NULL, message, &argv[0]);
+    e_assert(status == napi_ok);
+  }
+
+  status = napi_call_function(env, undefined, javascript_callback, 2, argv, NULL);
+  e_assert(status == napi_ok || status == napi_pending_exception);
+  free_stream_event(event);
+}
+
+static bool queue_stream_event(work_data* work, stream_event* event, napi_threadsafe_function_call_mode mode) {
+  napi_status status = napi_call_threadsafe_function(work->stream_callback, event, mode);
+  if (status != napi_ok) {
+    free_stream_event(event);
+    return false;
+  }
+  return true;
+}
+
+static void queue_stream_chunk(work_data* work, const int16_t* samples, size_t sample_count) {
+  stream_event* event = (stream_event*) calloc(1, sizeof(*event));
+  event->type = STREAM_CHUNK;
+  event->size = sample_count * sizeof(int16_t);
+  event->data = malloc(event->size);
+  if (event->data == NULL) {
+    free_stream_event(event);
+    return;
+  }
+  memcpy(event->data, samples, event->size);
+  queue_stream_event(work, event, napi_tsfn_blocking);
+}
+
+static void queue_stream_end(work_data* work) {
+  stream_event* event = (stream_event*) calloc(1, sizeof(*event));
+  event->type = STREAM_END;
+  queue_stream_event(work, event, napi_tsfn_blocking);
+}
+
+static void queue_stream_error(work_data* work, const char* message) {
+  stream_event* event = (stream_event*) calloc(1, sizeof(*event));
+  event->type = STREAM_ERROR;
+  size_t size = strlen(message);
+  event->error_message = (char*) malloc(size + 1);
+  if (event->error_message == NULL) {
+    free_stream_event(event);
+    return;
+  }
+  strcpy(event->error_message, message);
+  queue_stream_event(work, event, napi_tsfn_blocking);
 }
 
 static void async_work_on_execute(napi_env env, void* data) {
@@ -82,6 +179,23 @@ static void async_work_on_execute(napi_env env, void* data) {
         set_work_error(work, "unknown native exception in Ebyroid::Convert");
       }
       break;
+    case WORK_CONVERT_STREAM:
+      try {
+        module->ebyroid->ConvertStream(
+            *work->convert_params,
+            work->input,
+            [work](const int16_t* samples, size_t sample_count) {
+              queue_stream_chunk(work, samples, sample_count);
+            });
+        queue_stream_end(work);
+      } catch (const std::exception& e) {
+        Eprintf("(Ebyroid::ConvertStream) %s", e.what());
+        queue_stream_error(work, e.what());
+      } catch (...) {
+        Eprintf("(Ebyroid::ConvertStream) unknown native exception");
+        queue_stream_error(work, "unknown native exception in Ebyroid::ConvertStream");
+      }
+      break;
   }
 }
 
@@ -91,6 +205,24 @@ static void async_work_on_complete(napi_env env, napi_status work_status, void* 
   napi_value retval[RETVAL_SIZE];
   napi_value callback, undefined, null_value;
   work_data* work = (work_data*) data;
+
+  if (work->worktype == WORK_CONVERT_STREAM) {
+    if (work_status == napi_cancelled) {
+      queue_stream_error(work, "N-API streaming work has been cancelled");
+    }
+    status = napi_release_threadsafe_function(work->stream_callback, napi_tsfn_release);
+    e_assert(status == napi_ok);
+    status = napi_delete_async_work(env, work->self);
+    e_assert(status == napi_ok);
+    free(work->input);
+    if (work->convert_params) {
+      free(work->convert_params->base_dir);
+      free(work->convert_params->voice);
+      free(work->convert_params);
+    }
+    free(work);
+    return;
+  }
 
   // prepare JS 'undefined' value
   status = napi_get_undefined(env, &undefined);
@@ -146,6 +278,9 @@ static void async_work_on_complete(napi_env env, napi_status work_status, void* 
       status = napi_create_typedarray(
           env, napi_int16_array, work->output_size / 2, array_buffer, 0, &return_value);
       e_assert(status == napi_ok);
+      break;
+    case WORK_CONVERT_STREAM:
+      e_assert(false);
       break;
   }
   retval[0] = null_value;
@@ -280,7 +415,7 @@ static napi_value do_async_work(napi_env env, napi_callback_info info, work_type
     }
   }
 
-  if (worktype == WORK_CONVERT && params == NULL) {
+  if ((worktype == WORK_CONVERT || worktype == WORK_CONVERT_STREAM) && params == NULL) {
     free(buffer);
     napi_throw_type_error(env, "EBY004", "convert options must include needs_reload");
     return NULL;
@@ -297,6 +432,9 @@ static napi_value do_async_work(napi_env env, napi_callback_info info, work_type
     case WORK_CONVERT:
       workname = "Raw Text To PCM Converter";
       break;
+    case WORK_CONVERT_STREAM:
+      workname = "Raw Text To PCM Stream Converter";
+      break;
   }
 
   // create name identifier
@@ -304,21 +442,33 @@ static napi_value do_async_work(napi_env env, napi_callback_info info, work_type
   status = napi_create_string_utf8(env, workname, NAPI_AUTO_LENGTH, &async_work_name);
   en_assert(status == napi_ok);
 
-  // create reference for the callback fucntion
-  // because it otherwise will soon get GC'd
-  napi_ref callback_ref;
-  status = napi_create_reference(env, argv[2], 1, &callback_ref);
-  en_assert(status == napi_ok);
-
   // create working data
   work_data* work = (work_data*) calloc(1, sizeof(*work));
   work->input = buffer;
   work->input_size = node_buffer_size;
-  work->javascript_callback_ref = callback_ref;
   work->worktype = worktype;
   work->output = NULL;
   work->error_message = NULL;
   work->convert_params = params;
+
+  if (worktype == WORK_CONVERT_STREAM) {
+    status = napi_create_threadsafe_function(env,
+                                             argv[2],
+                                             NULL,
+                                             async_work_name,
+                                             16,
+                                             1,
+                                             NULL,
+                                             NULL,
+                                             NULL,
+                                             call_stream_callback,
+                                             &work->stream_callback);
+    en_assert(status == napi_ok);
+  } else {
+    // create reference for the callback function because it otherwise will soon be GC'd
+    status = napi_create_reference(env, argv[2], 1, &work->javascript_callback_ref);
+    en_assert(status == napi_ok);
+  }
 
   // create async work object
   status = napi_create_async_work(
@@ -338,6 +488,14 @@ static napi_value do_async_work(napi_env env, napi_callback_info info, work_type
 //
 static napi_value export_func_convert(napi_env env, napi_callback_info info) {
   return do_async_work(env, info, WORK_CONVERT);
+}
+
+//
+// JS Signature:
+//   convertStream(inbytes: Buffer, options: object, event: function(err, chunk: Buffer|null))
+//
+static napi_value export_func_convert_stream(napi_env env, napi_callback_info info) {
+  return do_async_work(env, info, WORK_CONVERT_STREAM);
 }
 
 //
@@ -432,6 +590,7 @@ static napi_value module_main(napi_env env, napi_value exports) {
       {"speech", NULL, export_func_speech, NULL, NULL, NULL, napi_enumerable, NULL},
       {"reinterpret", NULL, export_func_reinterpret, NULL, NULL, NULL, napi_enumerable, NULL},
       {"convert", NULL, export_func_convert, NULL, NULL, NULL, napi_enumerable, NULL},
+      {"convertStream", NULL, export_func_convert_stream, NULL, NULL, NULL, napi_enumerable, NULL},
       {"init", NULL, export_func_init, NULL, NULL, NULL, napi_enumerable, NULL},
   };
 

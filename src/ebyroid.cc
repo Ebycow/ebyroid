@@ -5,6 +5,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 #include <Windows.h>
 
@@ -112,6 +113,37 @@ int Ebyroid::Speech(const unsigned char* inbytes,
   return 0;
 }
 
+int Ebyroid::SpeechStream(const unsigned char* inbytes,
+                          const SpeechChunkCallback& on_chunk,
+                          uint32_t mode) {
+  if (api_adapter_ == nullptr) {
+    throw std::runtime_error("VOICEROID API is not initialized");
+  }
+  std::unique_ptr<Response> response(new Response(api_adapter_, on_chunk));
+
+  TJobParam param;
+  param.mode_in_out = mode == 0u ? IOMODE_AIKANA_TO_WAVE : (JobInOut) mode;
+  param.user_data = response.get();
+
+  int32_t job_id;
+  if (ResultCode result = api_adapter_->TextToSpeech(&job_id, &param, (const char*) inbytes);
+      result != ERR_SUCCESS) {
+    static constexpr char* format = "TextToSpeech failed with the result code %d\n"
+                                    "Given inbytes: %s";
+    char m[0xFFFF];
+    std::snprintf(m, 0xFFFF, format, result, inbytes);
+    throw std::runtime_error(m);
+  }
+
+  response->WaitForCompletion();
+
+  if (ResultCode result = api_adapter_->CloseSpeech(job_id); result != ERR_SUCCESS) {
+    throw std::runtime_error("failed to close streaming speech job");
+  }
+
+  return 0;
+}
+
 int Ebyroid::Convert(const ConvertParams& params,
                      const unsigned char* inbytes,
                      int16_t** outbytes,
@@ -125,8 +157,22 @@ int Ebyroid::Convert(const ConvertParams& params,
   return Speech(inbytes, outbytes, outsize, IOMODE_PLAIN_TO_WAVE);
 };
 
-Response::Response(ApiAdapter* adapter)
-    : api_adapter_(adapter), completion_event_(CreateEventA(NULL, TRUE, FALSE, NULL)) {
+int Ebyroid::ConvertStream(const ConvertParams& params,
+                           const unsigned char* inbytes,
+                           const SpeechChunkCallback& on_chunk) {
+  if (params.needs_reload) {
+    delete api_adapter_;
+    api_adapter_ = nullptr;
+    api_adapter_ = NewAdapter(params.base_dir, params.voice, params.volume);
+  }
+
+  return SpeechStream(inbytes, on_chunk, IOMODE_PLAIN_TO_WAVE);
+};
+
+Response::Response(ApiAdapter* adapter, SpeechChunkCallback on_chunk)
+    : api_adapter_(adapter),
+      completion_event_(CreateEventA(NULL, TRUE, FALSE, NULL)),
+      on_chunk_(std::move(on_chunk)) {
   if (completion_event_ == NULL) {
     string message = "CreateEvent failed with code ";
     message += std::to_string(GetLastError());
@@ -145,7 +191,11 @@ void Response::Write(char* bytes, uint32_t size) {
 }
 
 void Response::Write16(int16_t* shorts, uint32_t size) {
-  buffer_16_.insert(std::end(buffer_16_), shorts, shorts + size);
+  if (on_chunk_) {
+    on_chunk_(shorts, size);
+  } else {
+    buffer_16_.insert(std::end(buffer_16_), shorts, shorts + size);
+  }
 }
 
 vector<unsigned char> Response::End() {

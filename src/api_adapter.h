@@ -15,7 +15,10 @@ static constexpr int32_t kMaxVoiceName = 80;
 
 static constexpr int32_t kControlLength = 12;
 
-static constexpr int32_t kConfigRawbufSize = 0x158880;
+// Keep the engine callback buffer below the original 0x158880-byte default so
+// long synthesis jobs can emit PCM before completion while remaining within
+// the legacy AITalk API's accepted range.
+static constexpr int32_t kConfigRawbufSize = 0x20000;
 
 static constexpr int32_t kLenSeedValue = 0;
 

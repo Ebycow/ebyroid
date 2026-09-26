@@ -72,6 +72,31 @@ PS C:\ebyroid> ./ebyroid start --port 4567
 
 ## API Endpoints of Standalone Server
 
+### `POST /api/v2/audiostream`
+
+This is the streaming endpoint recommended for new clients. It accepts the
+speech text in a JSON request body, so the text is not exposed in the URL, and
+starts a chunked PCM response as soon as the native engine emits audio.
+
+#### request
+
+`Content-Type: application/json`
+
+```json
+{
+  "text": "Text to speak",
+  "name": "kiritan-chan"
+}
+```
+
+`text` is required. `name` is optional and selects the configured voice. The
+maximum JSON request-body size is 64 KiB.
+
+The response content type, PCM headers, and raw PCM format are the same as
+`GET /api/v1/audiostream`. The response uses HTTP chunked transfer rather than
+waiting for the complete speech buffer. The legacy v1 endpoints remain
+available for compatibility.
+
 ### `GET /api/v1/audiostream`
 
 #### query parameters
@@ -148,8 +173,19 @@ I'd appreciate your support as in making a pull request, opening an issue or ema
 
 ### Does Ebyroid support concurrency?
 
-Yes. It sticks to asynchronous operation as hard as I can do in native code so as not to break Node's concept.\
-That results in Ebyroid being able to process `^100RPS` when the CPU is fast enough.
+The Node.js API is asynchronous, but one Ebyroid process serializes native
+synthesis jobs because the underlying VOICEROID API accepts only one active
+job reliably. Run multiple Ebyroid processes on different ports when you need
+parallel synthesis.
+
+For reference, a local packaged-executable benchmark on one machine measured
+about 21-22 short requests per second for one process and about 103 requests
+per second across five processes. These numbers depend on the CPU, voice, and
+input text; they are not a single-process guarantee.
+
+The v2 endpoint improves time to first audio rather than total synthesis time.
+With the native engine's minimum accepted 128 KiB PCM callback buffer, short
+utterances may still fit in one chunk and see little latency improvement.
 
 That said, however, some operations like switching voiceroid may acquire the inter-thread lock and take a couple of hundreds of millis (200ms-400ms practically) solely by itself. Be aware that frequent occurrence of such events may lead to slow the whole app.
 
