@@ -41,6 +41,10 @@ class FakeCluster extends EventEmitter {
     this.workers[worker.id] = worker;
     return worker;
   }
+
+  setupMaster(settings) {
+    this.settings = settings;
+  }
 }
 
 function main() {
@@ -60,6 +64,7 @@ function main() {
 
   assert.equal(cluster.forks, 2);
   assert.equal(cluster.schedulingPolicy, cluster.SCHED_RR);
+  assert.deepEqual(cluster.settings.execArgv, process.execArgv);
   cluster.workers[1].emit('message', {
     type: LOG_MESSAGE,
     line: '{"event":"request.received"}',
@@ -91,6 +96,17 @@ function main() {
     type: METRICS_MESSAGE,
     metrics: { active: 1 },
   });
+
+  const packagedCluster = new FakeCluster();
+  const packagedSupervisor = startCluster({
+    cluster: packagedCluster,
+    workers: 1,
+    logger,
+    packaged: true,
+    handleSignals: false,
+  });
+  assert.deepEqual(packagedCluster.settings.execArgv, []);
+  packagedSupervisor.stop('test');
 }
 
 try {
