@@ -69,6 +69,44 @@ PS C:\ebyroid> ./ebyroid configure
 PS C:\ebyroid> ./ebyroid start --port 4567
 ```
 
+For five native synthesis processes, a bounded queue, and JSON logs:
+
+```powershell
+PS C:\ebyroid> ./ebyroid start --workers 5 --queue-limit 20 --queue-timeout-ms 10000 --log-level info
+```
+
+Each worker runs exactly one native synthesis at a time. `--queue-limit` is the
+number of waiting requests per worker, in addition to the one active request.
+When that queue is full, or a request waits longer than
+`--queue-timeout-ms`, the server responds with `503 Service Unavailable` and
+`Retry-After: 1`. Health checks do not enter the synthesis queue.
+
+`--workers` defaults to `1`; increasing it loads a separate VOICEROID engine
+and voice library in every process, so startup time and memory use grow with
+the worker count. The primary process distributes connections using
+round-robin scheduling and replaces a worker if it exits unexpectedly.
+
+### Logging
+
+Server logs are JSON Lines on standard output by default. In multi-process
+mode workers send log records to the primary process over IPC, and only the
+primary writes them to standard output. Use `--log-format pretty` for
+human-readable output and `--log-level trace|debug|info|warn|error|silent` to
+control verbosity.
+
+Important lifecycle events include `request.received`, `request.validated`,
+`queue.enqueued`, `queue.dequeued`, `synthesis.started`,
+`synthesis.first_chunk`, `synthesis.progress`, `synthesis.completed`,
+`response.started`, `response.backpressure`, and `request.completed`.
+Per-worker `metrics.snapshot` and aggregate `cluster.metrics` records are
+written every `--metrics-interval-ms` (10 seconds by default; `0` disables
+them).
+
+Speech text, JSON request bodies, URL queries, and User-Agent values are never
+included in these logs. Request records contain text length and voice name for
+diagnostics instead. `trace` writes one record per PCM chunk and can be noisy;
+`debug` writes queue and periodic generation progress details.
+
 
 ## API Endpoints of Standalone Server
 
@@ -175,13 +213,14 @@ I'd appreciate your support as in making a pull request, opening an issue or ema
 
 The Node.js API is asynchronous, but one Ebyroid process serializes native
 synthesis jobs because the underlying VOICEROID API accepts only one active
-job reliably. Run multiple Ebyroid processes on different ports when you need
-parallel synthesis.
+job reliably. Use `--workers N` on the standalone server when you need up to
+N native jobs in parallel; a separate port per process is no longer required.
 
 For reference, a local packaged-executable benchmark on one machine measured
 about 21-22 short requests per second for one process and about 103 requests
 per second across five processes. These numbers depend on the CPU, voice, and
-input text; they are not a single-process guarantee.
+input text; they are not a single-process guarantee. Queueing smooths bursts
+but does not increase sustained capacity, so overload still returns `503`.
 
 The v2 endpoint improves time to first audio rather than total synthesis time.
 With the native engine's minimum accepted 128 KiB PCM callback buffer, short
