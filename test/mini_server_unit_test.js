@@ -2,6 +2,7 @@
 const assert = require('assert').strict;
 const http = require('http');
 const { PassThrough } = require('stream');
+const { Logger } = require('../lib/logger');
 const MiniServer = require('../lib/mini_server');
 
 function request(port, path) {
@@ -41,6 +42,11 @@ function postJson(port, path, body) {
 }
 
 async function main() {
+  const logLines = [];
+  const logger = new Logger({
+    level: 'trace',
+    write: line => logLines.push(line),
+  });
   const conversionError = Object.assign(new Error('日本語のエラー'), {
     code: 'TEST_ERROR',
   });
@@ -51,7 +57,7 @@ async function main() {
     convertStream: () => Promise.reject(conversionError),
     convertStreamEx: () => Promise.reject(conversionError),
   };
-  const mini = new MiniServer(ebyroid);
+  const mini = new MiniServer(ebyroid, { logger });
 
   mini.start(0);
   await new Promise(resolve => mini.server.once('listening', resolve));
@@ -96,6 +102,11 @@ async function main() {
 
     const malformed = await request(port, 'http://[invalid');
     assert.equal(malformed.res.statusCode, 500);
+
+    assert(logLines.some(line => line.includes('request.received')));
+    assert(logLines.some(line => line.includes('request.validated')));
+    assert(logLines.some(line => line.includes('response.completed')));
+    assert(logLines.every(line => !line.includes('secret speech')));
   } finally {
     await new Promise(resolve => mini.server.close(resolve));
   }
