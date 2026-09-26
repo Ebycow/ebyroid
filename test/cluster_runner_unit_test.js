@@ -126,6 +126,35 @@ function main() {
   pending[0]();
   assert.equal(stoppingCluster.forks, 1);
 
+  // A crash loop slows restarts down instead of stopping them for good.
+  const crashingCluster = new FakeCluster();
+  const delays = [];
+  const restarts = [];
+  const crashingSupervisor = startCluster({
+    cluster: crashingCluster,
+    workers: 1,
+    logger,
+    crashBackoffMs: 30000,
+    schedule: (callback, delayMs) => {
+      delays.push(delayMs);
+      restarts.push(callback);
+    },
+    handleSignals: false,
+  });
+  for (let i = 0; i < 4; i += 1) {
+    crashingCluster.emit(
+      'exit',
+      crashingCluster.workers[crashingCluster.forks],
+      1,
+      null
+    );
+    restarts.shift()();
+  }
+  assert.deepEqual(delays, [1000, 1000, 1000, 30000]);
+  assert.equal(crashingCluster.forks, 5);
+  assert(logs.some(line => line.includes('cluster.restart_delayed')));
+  crashingSupervisor.stop('test');
+
   const packagedCluster = new FakeCluster();
   const packagedSupervisor = startCluster({
     cluster: packagedCluster,
