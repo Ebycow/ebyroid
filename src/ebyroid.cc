@@ -49,10 +49,8 @@ int Ebyroid::Hiragana(const unsigned char* inbytes, unsigned char** outbytes, si
   int32_t job_id;
   if (ResultCode result = api_adapter_->TextToKana(&job_id, &param, (const char*) inbytes);
       result != ERR_SUCCESS) {
-    static constexpr char* format = "TextToKana failed with the result code %d\n"
-                                    "Given inbytes: %s";
-    char m[0xFFFF];
-    std::snprintf(m, 0xFFFF, format, result, inbytes);
+    char m[64];
+    std::snprintf(m, sizeof(m), "TextToKana failed with the result code %d", result);
     throw std::runtime_error(m);
   }
 
@@ -89,10 +87,8 @@ int Ebyroid::Speech(const unsigned char* inbytes,
   int32_t job_id;
   if (ResultCode result = api_adapter_->TextToSpeech(&job_id, &param, (const char*) inbytes);
       result != ERR_SUCCESS) {
-    static constexpr char* format = "TextToSpeech failed with the result code %d\n"
-                                    "Given inbytes: %s";
-    char m[0xFFFF];
-    std::snprintf(m, 0xFFFF, format, result, inbytes);
+    char m[64];
+    std::snprintf(m, sizeof(m), "TextToSpeech failed with the result code %d", result);
     throw std::runtime_error(m);
   }
 
@@ -128,10 +124,8 @@ int Ebyroid::SpeechStream(const unsigned char* inbytes,
   int32_t job_id;
   if (ResultCode result = api_adapter_->TextToSpeech(&job_id, &param, (const char*) inbytes);
       result != ERR_SUCCESS) {
-    static constexpr char* format = "TextToSpeech failed with the result code %d\n"
-                                    "Given inbytes: %s";
-    char m[0xFFFF];
-    std::snprintf(m, 0xFFFF, format, result, inbytes);
+    char m[64];
+    std::snprintf(m, sizeof(m), "TextToSpeech failed with the result code %d", result);
     throw std::runtime_error(m);
   }
 
