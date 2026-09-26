@@ -48,6 +48,7 @@ Module._load = function load(request, parent, isMain) {
 };
 
 const Ebyroid = require('../lib/ebyroid');
+const { Logger } = require('../lib/logger');
 const Voiceroid = require('../lib/voiceroid');
 
 Module._load = originalLoad;
@@ -91,11 +92,27 @@ async function main() {
   fakeNative.mode = 'success';
   await withTimeout(ebyroid.convertEx('lock was released', 'a'));
 
-  const pcm = await withTimeout(ebyroid.convertStream('streamed'));
+  const lines = [];
+  ebyroid.setLogger(
+    new Logger({ level: 'trace', write: line => lines.push(line) })
+  );
+  const requestLogger = ebyroid.logger.child({ requestId: 'request-1' });
+  const pcm = await withTimeout(
+    ebyroid.convertStream('secret streamed speech', { logger: requestLogger })
+  );
   const chunks = [];
   pcm.on('data', chunk => chunks.push(chunk));
   await withTimeout(once(pcm, 'end'));
   assert.deepEqual(Buffer.concat(chunks), Buffer.from([0, 0]));
+  assert(lines.some(line => line.includes('synthesis.started')));
+  assert(lines.some(line => line.includes('synthesis.first_chunk')));
+  assert(lines.some(line => line.includes('synthesis.completed')));
+  assert(lines.every(line => !line.includes('secret streamed speech')));
+  assert(
+    lines
+      .map(line => JSON.parse(line))
+      .every(record => record.requestId === 'request-1')
+  );
 }
 
 main().catch(err => {
