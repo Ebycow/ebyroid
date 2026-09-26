@@ -94,6 +94,13 @@ primary writes them to standard output. Use `--log-format pretty` for
 human-readable output and `--log-level trace|debug|info|warn|error|silent` to
 control verbosity.
 
+Every record carries `role`: `single` for a one-process server, `primary` for
+the supervisor in multi-process mode, or `worker` together with `workerId`.
+When the server is ready, `server.started` reports the listening `url`,
+`address`, and `port` along with the ebyroid `version`, Node.js version,
+architecture, and queue and log settings. In multi-process mode the primary
+also writes `cluster.started` with the same URL and version.
+
 Important lifecycle events include `request.received`, `request.validated`,
 `queue.enqueued`, `queue.dequeued`, `synthesis.started`,
 `synthesis.first_chunk`, `synthesis.progress`, `synthesis.completed`,

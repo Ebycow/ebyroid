@@ -60,7 +60,14 @@ function main() {
     writeLine: line => output.push(line),
     schedule: callback => scheduled.push(callback),
     handleSignals: false,
+    startedFields: { url: 'http://localhost:4090/', version: '9.9.9' },
   });
+  const clusterStarted = logs
+    .map(line => JSON.parse(line))
+    .find(record => record.event === 'cluster.started');
+  assert.equal(clusterStarted.url, 'http://localhost:4090/');
+  assert.equal(clusterStarted.version, '9.9.9');
+  assert.equal(clusterStarted.workers, 2);
 
   assert.equal(cluster.forks, 2);
   assert.equal(cluster.schedulingPolicy, cluster.SCHED_RR);
