@@ -31,6 +31,9 @@ typedef struct {
   napi_async_work self;
   napi_ref javascript_callback_ref;
   napi_threadsafe_function stream_callback;
+  // Allocated up front so the END/ERROR event can always be delivered.
+  stream_event* terminal_event;
+  const char* stream_failure;
   char* error_message;
   size_t error_size;
   ConvertParams* convert_params;
@@ -47,6 +50,20 @@ static void set_work_error(work_data* work, const char* message) {
   strcpy(what, message);
   work->error_message = what;
   work->error_size = size;
+}
+
+static void free_convert_params(ConvertParams* params) {
+  if (params == NULL) {
+    return;
+  }
+  free(params->base_dir);
+  free(params->voice);
+  free(params);
+}
+
+static napi_value throw_out_of_memory(napi_env env) {
+  napi_throw_error(env, "EBY005", "failed to allocate native work state");
+  return NULL;
 }
 
 static void free_stream_event(stream_event* event) {
@@ -82,9 +99,11 @@ static void call_stream_callback(napi_env env,
     status = napi_create_buffer_copy(env, event->size, event->data, NULL, &argv[1]);
     e_assert(status == napi_ok);
   } else if (event->type == STREAM_ERROR) {
+    const char* what = event->error_message != NULL
+                           ? event->error_message
+                           : "native streaming failed (out of memory)";
     napi_value message;
-    status = napi_create_string_utf8(
-        env, event->error_message, NAPI_AUTO_LENGTH, &message);
+    status = napi_create_string_utf8(env, what, NAPI_AUTO_LENGTH, &message);
     e_assert(status == napi_ok);
     status = napi_create_error(env, NULL, message, &argv[0]);
     e_assert(status == napi_ok);
@@ -104,35 +123,56 @@ static bool queue_stream_event(work_data* work, stream_event* event, napi_thread
   return true;
 }
 
+static void mark_stream_failed(work_data* work, const char* reason) {
+  if (work->stream_failure == NULL) {
+    work->stream_failure = reason;
+  }
+}
+
 static void queue_stream_chunk(work_data* work, const int16_t* samples, size_t sample_count) {
+  // After a lost chunk the stream can only end in an error, so stop sending.
+  if (work->stream_failure != NULL) {
+    return;
+  }
   stream_event* event = (stream_event*) calloc(1, sizeof(*event));
+  if (event == NULL) {
+    mark_stream_failed(work, "failed to allocate a PCM stream chunk");
+    return;
+  }
   event->type = STREAM_CHUNK;
   event->size = sample_count * sizeof(int16_t);
   event->data = malloc(event->size);
   if (event->data == NULL) {
     free_stream_event(event);
+    mark_stream_failed(work, "failed to allocate a PCM stream chunk");
     return;
   }
   memcpy(event->data, samples, event->size);
-  queue_stream_event(work, event, napi_tsfn_blocking);
+  if (!queue_stream_event(work, event, napi_tsfn_blocking)) {
+    mark_stream_failed(work, "failed to deliver a PCM stream chunk");
+  }
 }
 
-static void queue_stream_end(work_data* work) {
-  stream_event* event = (stream_event*) calloc(1, sizeof(*event));
-  event->type = STREAM_END;
-  queue_stream_event(work, event, napi_tsfn_blocking);
-}
-
-static void queue_stream_error(work_data* work, const char* message) {
-  stream_event* event = (stream_event*) calloc(1, sizeof(*event));
-  event->type = STREAM_ERROR;
-  size_t size = strlen(message);
-  event->error_message = (char*) malloc(size + 1);
-  if (event->error_message == NULL) {
-    free_stream_event(event);
+// Sends the one END or ERROR event of a stream. `message` is NULL on success.
+static void queue_stream_terminal(work_data* work, const char* message) {
+  stream_event* event = work->terminal_event;
+  if (event == NULL) {
     return;
   }
-  strcpy(event->error_message, message);
+  work->terminal_event = NULL;
+  if (message == NULL) {
+    message = work->stream_failure;
+  }
+  if (message == NULL) {
+    event->type = STREAM_END;
+  } else {
+    event->type = STREAM_ERROR;
+    size_t size = strlen(message);
+    event->error_message = (char*) malloc(size + 1);
+    if (event->error_message != NULL) {
+      strcpy(event->error_message, message);
+    }
+  }
   queue_stream_event(work, event, napi_tsfn_blocking);
 }
 
@@ -187,13 +227,13 @@ static void async_work_on_execute(napi_env env, void* data) {
             [work](const int16_t* samples, size_t sample_count) {
               queue_stream_chunk(work, samples, sample_count);
             });
-        queue_stream_end(work);
+        queue_stream_terminal(work, NULL);
       } catch (const std::exception& e) {
         Eprintf("(Ebyroid::ConvertStream) %s", e.what());
-        queue_stream_error(work, e.what());
+        queue_stream_terminal(work, e.what());
       } catch (...) {
         Eprintf("(Ebyroid::ConvertStream) unknown native exception");
-        queue_stream_error(work, "unknown native exception in Ebyroid::ConvertStream");
+        queue_stream_terminal(work, "unknown native exception in Ebyroid::ConvertStream");
       }
       break;
   }
@@ -207,19 +247,14 @@ static void async_work_on_complete(napi_env env, napi_status work_status, void* 
   work_data* work = (work_data*) data;
 
   if (work->worktype == WORK_CONVERT_STREAM) {
-    if (work_status == napi_cancelled) {
-      queue_stream_error(work, "N-API streaming work has been cancelled");
-    }
+    // Covers cancellation, where execute never ran; a no-op otherwise.
+    queue_stream_terminal(work, "N-API streaming work has been cancelled");
     status = napi_release_threadsafe_function(work->stream_callback, napi_tsfn_release);
     e_assert(status == napi_ok);
     status = napi_delete_async_work(env, work->self);
     e_assert(status == napi_ok);
     free(work->input);
-    if (work->convert_params) {
-      free(work->convert_params->base_dir);
-      free(work->convert_params->voice);
-      free(work->convert_params);
-    }
+    free_convert_params(work->convert_params);
     free(work);
     return;
   }
@@ -309,11 +344,7 @@ DO_FINALLY:
   free(work->input);
   free(work->output);
   free(work->error_message);
-  if (work->convert_params) {
-    free(work->convert_params->base_dir);
-    free(work->convert_params->voice);
-    free(work->convert_params);
-  }
+  free_convert_params(work->convert_params);
   free(work);
 }
 
@@ -356,6 +387,9 @@ static napi_value do_async_work(napi_env env, napi_callback_info info, work_type
 
   // allocate
   unsigned char* buffer = (unsigned char*) malloc(node_buffer_size + 1);
+  if (buffer == NULL) {
+    return throw_out_of_memory(env);
+  }
   memcpy(buffer, node_buffer_data, node_buffer_size);
   *(buffer + node_buffer_size) = '\0';
 
@@ -369,6 +403,10 @@ static napi_value do_async_work(napi_env env, napi_callback_info info, work_type
   if (is_param) {
     napi_value value;
     params = (ConvertParams*) calloc(1, sizeof(*params));
+    if (params == NULL) {
+      free(buffer);
+      return throw_out_of_memory(env);
+    }
 
     // fetch .needs_reload boolean
     status = napi_get_named_property(env, argv[1], "needs_reload", &value);
@@ -444,6 +482,11 @@ static napi_value do_async_work(napi_env env, napi_callback_info info, work_type
 
   // create working data
   work_data* work = (work_data*) calloc(1, sizeof(*work));
+  if (work == NULL) {
+    free(buffer);
+    free_convert_params(params);
+    return throw_out_of_memory(env);
+  }
   work->input = buffer;
   work->input_size = node_buffer_size;
   work->worktype = worktype;
@@ -452,6 +495,13 @@ static napi_value do_async_work(napi_env env, napi_callback_info info, work_type
   work->convert_params = params;
 
   if (worktype == WORK_CONVERT_STREAM) {
+    work->terminal_event = (stream_event*) calloc(1, sizeof(stream_event));
+    if (work->terminal_event == NULL) {
+      free(buffer);
+      free_convert_params(params);
+      free(work);
+      return throw_out_of_memory(env);
+    }
     status = napi_create_threadsafe_function(env,
                                              argv[2],
                                              NULL,
