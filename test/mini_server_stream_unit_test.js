@@ -70,6 +70,60 @@ async function disconnectBeforeSynthesisStarts(harness) {
   await waitFor(() => harness.mini.queue.active === 0);
 }
 
+function postText(port) {
+  return new Promise((resolve, reject) => {
+    const req = post(port);
+    req.on('response', res => {
+      const chunks = [];
+      res.on('data', chunk => chunks.push(chunk));
+      res.on('end', () => resolve({ res, body: Buffer.concat(chunks) }));
+      res.on('error', reject);
+    });
+    req.on('error', reject);
+    req.end(JSON.stringify({ text: 'x' }));
+  });
+}
+
+async function failBeforeFirstChunk(harness) {
+  const err = Object.assign(new Error('TextToSpeech failed'), {
+    code: 'NATIVE_ERROR',
+  });
+  harness.convertStream = async () => {
+    const stream = pcmStream();
+    let resolveCompletion;
+    stream.completion = new Promise(resolve => {
+      resolveCompletion = resolve;
+    });
+    // Same order as startNativeStream's finish(err).
+    setImmediate(() => {
+      resolveCompletion({ err });
+      stream.destroy(err);
+    });
+    return stream;
+  };
+  const before = harness.logs.length;
+  let destroyed = 0;
+  const spy = (req, res) => {
+    const destroy = res.destroy.bind(res);
+    res.destroy = (...args) => {
+      destroyed += 1;
+      return destroy(...args);
+    };
+  };
+  harness.mini.server.prependListener('request', spy);
+  const { res, body } = await postText(harness.port);
+  await new Promise(resolve => setImmediate(resolve));
+  harness.mini.server.removeListener('request', spy);
+  assert.equal(destroyed, 0, 'a completed 500 response must not be destroyed');
+  assert.equal(res.statusCode, 500);
+  assert.equal(Number(res.headers['content-length']), body.byteLength);
+  assert.equal(JSON.parse(body.toString('utf8')).code, 'NATIVE_ERROR');
+  const failures = harness.logs
+    .slice(before)
+    .filter(line => line.includes('"request.failed"'));
+  assert.equal(failures.length, 1);
+}
+
 async function main() {
   const harness = { logs: [], convertStream: null };
   const logger = new Logger({ write: line => harness.logs.push(line) });
@@ -83,6 +137,7 @@ async function main() {
   try {
     harness.port = harness.mini.server.address().port;
     await disconnectBeforeSynthesisStarts(harness);
+    await failBeforeFirstChunk(harness);
   } finally {
     await new Promise(resolve => harness.mini.server.close(resolve));
   }
