@@ -103,9 +103,16 @@ async function main() {
     const malformed = await request(port, 'http://[invalid');
     assert.equal(malformed.res.statusCode, 500);
 
+    const metrics = mini.logMetrics();
+    assert(metrics.received >= 4);
+    assert(metrics.completed >= 4);
+    assert.equal(metrics.active, 0);
+    assert.equal(metrics.queued, 0);
+
     assert(logLines.some(line => line.includes('request.received')));
     assert(logLines.some(line => line.includes('request.validated')));
     assert(logLines.some(line => line.includes('response.completed')));
+    assert(logLines.some(line => line.includes('metrics.snapshot')));
     assert(logLines.every(line => !line.includes('secret speech')));
   } finally {
     await new Promise(resolve => mini.server.close(resolve));

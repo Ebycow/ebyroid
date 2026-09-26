@@ -4,8 +4,10 @@ const { EventEmitter } = require('events');
 const { Logger } = require('../lib/logger');
 const {
   LOG_MESSAGE,
+  METRICS_MESSAGE,
   startCluster,
   workerLogWriter,
+  workerMetricsWriter,
 } = require('../lib/cluster_runner');
 
 class FakeWorker extends EventEmitter {
@@ -63,6 +65,10 @@ function main() {
     line: '{"event":"request.received"}',
   });
   assert.deepEqual(output, ['{"event":"request.received"}']);
+  cluster.workers[1].emit('message', {
+    type: METRICS_MESSAGE,
+    metrics: { active: 1, queued: 2 },
+  });
 
   cluster.emit('exit', cluster.workers[1], 1, null);
   assert.equal(scheduled.length, 1);
@@ -79,6 +85,12 @@ function main() {
   const write = workerLogWriter(message => messages.push(message));
   write('line');
   assert.deepEqual(messages, [{ type: LOG_MESSAGE, line: 'line' }]);
+  const writeMetrics = workerMetricsWriter(message => messages.push(message));
+  writeMetrics({ active: 1 });
+  assert.deepEqual(messages[1], {
+    type: METRICS_MESSAGE,
+    metrics: { active: 1 },
+  });
 }
 
 try {
