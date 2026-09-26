@@ -104,6 +104,28 @@ function main() {
     metrics: { active: 1 },
   });
 
+  // A restart that was already scheduled must not outlive shutdown.
+  const stoppingCluster = new FakeCluster();
+  const pending = [];
+  const cancelled = [];
+  const stoppingSupervisor = startCluster({
+    cluster: stoppingCluster,
+    workers: 1,
+    logger,
+    schedule: callback => {
+      pending.push(callback);
+      return callback;
+    },
+    cancelSchedule: handle => cancelled.push(handle),
+    handleSignals: false,
+  });
+  stoppingCluster.emit('exit', stoppingCluster.workers[1], 1, null);
+  assert.equal(pending.length, 1);
+  stoppingSupervisor.stop('test');
+  assert.deepEqual(cancelled, [pending[0]]);
+  pending[0]();
+  assert.equal(stoppingCluster.forks, 1);
+
   const packagedCluster = new FakeCluster();
   const packagedSupervisor = startCluster({
     cluster: packagedCluster,
