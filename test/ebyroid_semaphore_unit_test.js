@@ -25,6 +25,12 @@ const fakeNative = {
     setImmediate(() => {
       if (this.mode === 'reload-error' && options.needs_reload) {
         callback(new Error('voice reload failed'), null);
+      } else if (this.mode === 'slow-stream') {
+        callback(null, Buffer.from([1, 1]));
+        this.finishStream = () => {
+          callback(null, Buffer.from([2, 2]));
+          callback(null, null);
+        };
       } else {
         callback(null, Buffer.from([0, 0]));
         callback(null, null);
@@ -113,6 +119,24 @@ async function main() {
       .map(line => JSON.parse(line))
       .every(record => record.requestId === 'request-1')
   );
+
+  // A consumer may destroy the stream while native synthesis continues.
+  fakeNative.mode = 'slow-stream';
+  const abandoned = await withTimeout(ebyroid.convertStream('abandoned'));
+  let ended = false;
+  abandoned.on('end', () => {
+    ended = true;
+  });
+  abandoned.once('data', () => abandoned.destroy());
+  await withTimeout(once(abandoned, 'close'));
+  fakeNative.finishStream();
+  const completion = await withTimeout(abandoned.completion);
+  assert.equal(completion.chunks, 1);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(ended, false, 'a destroyed stream must not emit end');
+
+  fakeNative.mode = 'success';
+  await withTimeout(ebyroid.convertStream('slot was released'));
 }
 
 main().catch(err => {
