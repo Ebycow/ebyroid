@@ -18,6 +18,7 @@ function main() {
   const argv = {
     port: 4090,
     workers: 1,
+    workerIdleTimeoutMs: 600000,
     queueLimit: 20,
     queueTimeoutMs: 10000,
     logLevel: 'info',
@@ -35,6 +36,7 @@ function main() {
     node: process.version,
     arch: process.arch,
     workers: 1,
+    workerIdleTimeoutMs: 600000,
     queueLimit: 20,
     queueTimeoutMs: 10000,
     logLevel: 'info',

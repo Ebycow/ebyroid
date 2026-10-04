@@ -10,7 +10,11 @@ services:
     init: false # tini をイメージ側で使う
     environment:
       EBYROID_PORT: 4090
-      EBYROID_WORKERS: ${EBYROID_WORKERS:-1}
+      # ワーカー数の上限。デフォルト話者は常駐し、ほかの話者は必要なときに 1 話者 1 ワーカーで起動する
+      # (1 にすると 1 プロセスで話者を切り替える従来の動き)
+      EBYROID_WORKERS: ${EBYROID_WORKERS:-3}
+      # デフォルト以外の話者のワーカーを止めるまでの無通信時間 (ms, 0 で止めない)
+      EBYROID_WORKER_IDLE_TIMEOUT_MS: ${EBYROID_WORKER_IDLE_TIMEOUT_MS:-600000}
     ports:
       - "${EBYROID_HOST_PORT:-4090}:4090"
     volumes:

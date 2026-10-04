@@ -13,6 +13,7 @@ xvfb-run -a wine 'Z:\opt\node\node.exe' 'Z:\app\bin\main.js' start \
   --config 'Z:\etc\ebyroid\ebyroid.conf.json' \
   --port "${EBYROID_PORT:-4090}" \
   --workers "${EBYROID_WORKERS:-1}" \
+  --worker-idle-timeout-ms "${EBYROID_WORKER_IDLE_TIMEOUT_MS:-600000}" \
   "$@" >> "$LOG" 2>&1 &
 pid=$!
 

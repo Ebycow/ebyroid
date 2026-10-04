@@ -69,22 +69,37 @@ PS C:\ebyroid> ./ebyroid configure
 PS C:\ebyroid> ./ebyroid start --port 4567
 ```
 
-For five native synthesis processes, a bounded queue, and JSON logs:
+For a worker process per voice, a bounded queue, and JSON logs:
 
 ```powershell
-PS C:\ebyroid> ./ebyroid start --workers 5 --queue-limit 20 --queue-timeout-ms 10000 --log-level info
+PS C:\ebyroid> ./ebyroid start --workers 3 --worker-idle-timeout-ms 600000 --queue-limit 20 --queue-timeout-ms 10000 --log-level info
 ```
+
+`--workers` defaults to `1`: one process serves every voice and reloads the
+voice library whenever the requested voice changes, which blocks every other
+request for a few hundred milliseconds.
+
+With `--workers N` greater than `1`, `N` is the maximum number of worker
+processes, and each worker serves a single voice so a voice change never
+reloads anything. The primary process receives every request, reads the voice
+name from the `name` query parameter or JSON field, and forwards the request to
+that voice's worker over the loopback interface.
+
+- The default voice's worker starts with the server, is never stopped, and is
+  restarted if it exits unexpectedly.
+- Another voice gets a worker on its first request. The worker stops after
+  `--worker-idle-timeout-ms` without requests (10 minutes by default; `0` keeps
+  it running).
+- When `N` workers are already running, the least recently used idle worker
+  takes over the new voice and reloads its library, which is much cheaper than
+  starting a process. If every worker is busy, the request waits for up to
+  `--queue-timeout-ms`.
 
 Each worker runs exactly one native synthesis at a time. `--queue-limit` is the
 number of waiting requests per worker, in addition to the one active request.
 When that queue is full, or a request waits longer than
 `--queue-timeout-ms`, the server responds with `503 Service Unavailable` and
 `Retry-After: 1`. Health checks do not enter the synthesis queue.
-
-`--workers` defaults to `1`; increasing it loads a separate VOICEROID engine
-and voice library in every process, so startup time and memory use grow with
-the worker count. The primary process distributes connections using
-round-robin scheduling and replaces a worker if it exits unexpectedly.
 
 ### Logging
 
@@ -133,7 +148,8 @@ use another directory), which wine sees as `Z:\voiceroid`,
 so `baseDirPath` in `docker/ebyroid.conf.json` must look like
 `Z:\\voiceroid\\KiritanEX`. The server listens on port 4090
 (`EBYROID_HOST_PORT` changes the host side) and `EBYROID_WORKERS` sets
-`--workers`.
+`--workers` (3 by default here). `EBYROID_WORKER_IDLE_TIMEOUT_MS` sets
+`--worker-idle-timeout-ms`.
 
 `bin/`, `lib/`, `index.js` and `package.json` are mounted into the container,
 so `docker compose restart` applies changes to them and to the config file.
@@ -249,20 +265,21 @@ I'd appreciate your support as in making a pull request, opening an issue or ema
 
 The Node.js API is asynchronous, but one Ebyroid process serializes native
 synthesis jobs because the underlying VOICEROID API accepts only one active
-job reliably. Use `--workers N` on the standalone server when you need up to
-N native jobs in parallel; a separate port per process is no longer required.
+job reliably. With `--workers N` the standalone server runs one worker per
+voice, so different voices synthesize in parallel and never wait for each
+other's voice changes. Requests for the same voice are still handled one at a
+time by that voice's worker.
 
-For reference, a local packaged-executable benchmark on one machine measured
-about 21-22 short requests per second for one process and about 103 requests
-per second across five processes. These numbers depend on the CPU, voice, and
-input text; they are not a single-process guarantee. Queueing smooths bursts
-but does not increase sustained capacity, so overload still returns `503`.
+For reference, one process handled about 21-22 short requests per second in a
+local packaged-executable benchmark. These numbers depend on the CPU, voice,
+and input text. Queueing smooths bursts but does not increase sustained
+capacity, so overload still returns `503`.
 
 The v2 endpoint improves time to first audio rather than total synthesis time.
 With the native engine's minimum accepted 128 KiB PCM callback buffer, short
 utterances may still fit in one chunk and see little latency improvement.
 
-That said, however, some operations like switching voiceroid may acquire the inter-thread lock and take a couple of hundreds of millis (200ms-400ms practically) solely by itself. Be aware that frequent occurrence of such events may lead to slow the whole app.
+That said, however, switching voiceroid within one process acquires the inter-thread lock and takes a couple of hundreds of millis (200ms-400ms practically on Windows, about 800ms under wine) by itself. With `--workers 1`, frequent voice changes slow the whole app down; give each frequently used voice its own worker with `--workers N` instead.
 
 
 ## License
