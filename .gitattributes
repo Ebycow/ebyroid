@@ -1,0 +1,5 @@
+# Windows でチェックアウトしても改行を LF に揃える
+* text=auto eol=lf
+*.exe binary
+*.node binary
+*.dll binary
