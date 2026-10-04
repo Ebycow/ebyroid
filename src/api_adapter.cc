@@ -3,7 +3,7 @@
 #include <memory>
 #include <stdexcept>
 
-#include <Windows.h>
+#include <windows.h>
 
 #include "ebyutil.h"
 

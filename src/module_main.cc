@@ -1,6 +1,7 @@
 #include <node_api.h>
 
 #include <stdint.h>
+#include <cstring>
 
 #include "ebyroid.h"
 #include "ebyutil.h"
@@ -421,7 +422,7 @@ static napi_value do_async_work(napi_env env, napi_callback_info info, work_type
       char* base_dir;
       status = napi_get_named_property(env, argv[1], "base_dir", &value);
       en_assert(status == napi_ok);
-      status = napi_get_value_string_utf8(env, value, NULL, NULL, &bufsize);
+      status = napi_get_value_string_utf8(env, value, NULL, 0, &bufsize);
       en_assert(status == napi_ok);
       base_dir = (char*) malloc(bufsize + 1);
       status = napi_get_value_string_utf8(env, value, base_dir, bufsize + 1, NULL);
@@ -432,7 +433,7 @@ static napi_value do_async_work(napi_env env, napi_callback_info info, work_type
       char* voice;
       status = napi_get_named_property(env, argv[1], "voice", &value);
       en_assert(status == napi_ok);
-      status = napi_get_value_string_utf8(env, value, NULL, NULL, &bufsize);
+      status = napi_get_value_string_utf8(env, value, NULL, 0, &bufsize);
       en_assert(status == napi_ok);
       voice = (char*) malloc(bufsize + 1);
       status = napi_get_value_string_utf8(env, value, voice, bufsize + 1, NULL);
@@ -459,7 +460,7 @@ static napi_value do_async_work(napi_env env, napi_callback_info info, work_type
     return NULL;
   }
 
-  char* workname;
+  const char* workname = nullptr;
   switch (worktype) {
     case WORK_HIRAGANA:
       workname = "Input Text Reinterpretor";

@@ -9,9 +9,9 @@ namespace ebyroid {
 
 static constexpr int32_t kFrequency44 = 0xAC44;
 static constexpr int32_t kFrequency22 = 0x5622;
-static constexpr char* kDllFilename = "aitalked.dll";
-static constexpr char* kLicFilename = "aitalk.lic";
-static constexpr char* kWinDelimit = "\\";
+static constexpr const char* kDllFilename = "aitalked.dll";
+static constexpr const char* kLicFilename = "aitalk.lic";
+static constexpr const char* kWinDelimit = "\\";
 
 struct Settings {
   std::string base_dir;

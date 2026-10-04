@@ -7,7 +7,7 @@
 #include <string>
 #include <utility>
 
-#include <Windows.h>
+#include <windows.h>
 
 #include "api_adapter.h"
 #include "api_settings.h"

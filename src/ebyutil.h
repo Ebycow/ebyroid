@@ -25,7 +25,7 @@
 #ifdef _DEBUG
 #define Dprintf(a, ...)                                                                            \
   do {                                                                                             \
-    printf("\x1b[1;36m[C++ DEBUG]\x1b[0m " a "\n", __VA_ARGS__);                                   \
+    printf("\x1b[1;36m[C++ DEBUG]\x1b[0m " a "\n", ##__VA_ARGS__);                                   \
   } while (0)
 #else
 #define Dprintf(a, ...)                                                                            \
@@ -35,7 +35,7 @@
 
 #define Eprintf(a, ...)                                                                            \
   do {                                                                                             \
-    fprintf(stderr, "\x1b[1;31m[ERROR]\x1b[0m " a "\n", __VA_ARGS__);                              \
+    fprintf(stderr, "\x1b[1;31m[ERROR]\x1b[0m " a "\n", ##__VA_ARGS__);                              \
   } while (0)
 
 #define _____coffee(milk) #milk
