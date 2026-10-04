@@ -117,10 +117,11 @@ diagnostics instead. `trace` writes one record per PCM chunk and can be noisy;
 
 ### Docker (Linux / wine)
 
-The standalone server also runs on Linux under 32-bit wine with Docker Compose.
+The standalone server also runs on Linux under 32-bit wine with Docker Compose,
+without Windows or `ebyroid.exe`. The image cross-builds `ebyroid.node` with
+MinGW-w64 and runs the JavaScript sources with the Windows (ia32) `node.exe`.
 Copy `C:\Program Files (x86)\AHS` from Windows to `AHS/` in this repository
-(it is git-ignored), build `pack/ebyroid.exe` on Windows with
-`npm run pack:release`, then:
+(it is git-ignored), then:
 
 ```sh
 cp docker/ebyroid.conf.example.json docker/ebyroid.conf.json
@@ -130,9 +131,14 @@ docker compose up -d --build
 `AHS/VOICEROID+` is mounted at `/voiceroid` (set `VOICEROID_DIR` in `.env` to
 use another directory), which wine sees as `Z:\voiceroid`,
 so `baseDirPath` in `docker/ebyroid.conf.json` must look like
-`Z:\\voiceroid\\KiritanEX`. Edit the file and run `docker compose restart` to
-apply changes. The server listens on port 4090 (`EBYROID_HOST_PORT` changes the
-host side) and `EBYROID_WORKERS` sets `--workers`.
+`Z:\\voiceroid\\KiritanEX`. The server listens on port 4090
+(`EBYROID_HOST_PORT` changes the host side) and `EBYROID_WORKERS` sets
+`--workers`.
+
+`bin/`, `lib/`, `index.js` and `package.json` are mounted into the container,
+so `docker compose restart` applies changes to them and to the config file.
+Run `docker compose up -d --build` after changing `src/`, `CMakeLists.txt` or
+the dependencies.
 
 Node.js under wine cannot write to a Unix pipe, so the container writes the
 server log to a file and streams it to `docker compose logs`.

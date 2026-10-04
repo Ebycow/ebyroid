@@ -1,3 +1,7 @@
-# イメージに入れるのは docker/ 以下のスクリプトだけ
+# イメージのビルドに使うものだけを送る (JS は compose でマウントする)
 *
-!docker/entrypoint.sh
+!CMakeLists.txt
+!src/
+!docker/
+!package.json
+!npm-shrinkwrap.json

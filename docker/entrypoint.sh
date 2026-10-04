@@ -9,7 +9,7 @@ tail -n +1 -F "$LOG" 2>/dev/null &
 
 # aitalked.dll が USER32 をリンクしているので念のため仮想ディスプレイ上で起動する
 # 追記モード (>>) なので、下でファイルを空にしても書き込み位置が先頭に戻る
-xvfb-run -a wine Z:\\ebyroid\\ebyroid.exe start \
+xvfb-run -a wine 'Z:\opt\node\node.exe' 'Z:\app\bin\main.js' start \
   --config 'Z:\etc\ebyroid\ebyroid.conf.json' \
   --port "${EBYROID_PORT:-4090}" \
   --workers "${EBYROID_WORKERS:-1}" \
