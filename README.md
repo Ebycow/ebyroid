@@ -115,6 +115,29 @@ diagnostics instead. `trace` writes one record per PCM chunk and can be noisy;
 `debug` writes queue and periodic generation progress details.
 
 
+### Docker (Linux / wine)
+
+The standalone server also runs on Linux under 32-bit wine with Docker Compose.
+Copy your VOICEROID+ installation directory (the one that contains `Aoi`,
+`KiritanEX` and so on) from Windows, build `pack/ebyroid.exe` on Windows with
+`npm run pack:release`, then:
+
+```sh
+echo 'VOICEROID_DIR=/path/to/VOICEROID+' > .env
+cp docker/ebyroid.conf.example.json docker/ebyroid.conf.json
+docker compose up -d --build
+```
+
+`VOICEROID_DIR` is mounted at `/voiceroid`, which wine sees as `Z:\voiceroid`,
+so `baseDirPath` in `docker/ebyroid.conf.json` must look like
+`Z:\\voiceroid\\KiritanEX`. Edit the file and run `docker compose restart` to
+apply changes. The server listens on port 4090 (`EBYROID_HOST_PORT` changes the
+host side) and `EBYROID_WORKERS` sets `--workers`.
+
+Node.js under wine cannot write to a Unix pipe, so the container writes the
+server log to a file and streams it to `docker compose logs`.
+
+
 ## API Endpoints of Standalone Server
 
 ### `POST /api/v2/audiostream`

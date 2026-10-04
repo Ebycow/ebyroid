@@ -1,0 +1,22 @@
+# Linux で VOICEROID+ と ebyroid を wine 上で動かす
+# 使い方は README の「Docker (Linux / wine)」を参照
+services:
+  ebyroid:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    image: ebyroid-wine
+    restart: unless-stopped
+    init: false # tini をイメージ側で使う
+    environment:
+      EBYROID_PORT: 4090
+      EBYROID_WORKERS: ${EBYROID_WORKERS:-1}
+    ports:
+      - "${EBYROID_HOST_PORT:-4090}:4090"
+    volumes:
+      # Windows からコピーした VOICEROID+ インストールディレクトリ (Aoi, KiritanEX などを含む)
+      - ${VOICEROID_DIR:?.env に VOICEROID_DIR を設定してください}:/voiceroid:ro
+      # pkg でビルドした ebyroid.exe と ebyroid.node
+      - ./pack:/ebyroid:ro
+      # 話者設定。編集したら docker compose restart で反映
+      - ${EBYROID_CONFIG:-./docker/ebyroid.conf.json}:/etc/ebyroid/ebyroid.conf.json:ro
