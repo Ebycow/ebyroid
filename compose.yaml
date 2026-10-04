@@ -15,7 +15,8 @@ services:
       - "${EBYROID_HOST_PORT:-4090}:4090"
     volumes:
       # Windows からコピーした VOICEROID+ インストールディレクトリ (Aoi, KiritanEX などを含む)
-      - ${VOICEROID_DIR:?.env に VOICEROID_DIR を設定してください}:/voiceroid:ro
+      # 既定ではリポジトリ直下の AHS/ (git 管理外) を使う
+      - ${VOICEROID_DIR:-./AHS/VOICEROID+}:/voiceroid:ro
       # pkg でビルドした ebyroid.exe と ebyroid.node
       - ./pack:/ebyroid:ro
       # 話者設定。編集したら docker compose restart で反映

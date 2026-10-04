@@ -5,6 +5,8 @@ dll/
 .vscode/
 *.wav
 *.conf.json
+# Windows からコピーした VOICEROID のインストールディレクトリ
+AHS/
 
 ## Auto generated
 
