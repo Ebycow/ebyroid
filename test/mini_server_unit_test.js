@@ -64,6 +64,9 @@ async function main() {
 
   try {
     const { port } = mini.server.address();
+    const health = await request(port, '/api/v1/health');
+    assert.equal(health.res.statusCode, 200);
+
     const { res, body } = await request(port, '/api/v1/audiofile?text=test');
     assert.equal(res.statusCode, 500);
     assert.equal(Number(res.headers['content-length']), body.byteLength);

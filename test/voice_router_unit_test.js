@@ -54,7 +54,11 @@ async function main() {
   let released = 0;
   let nextError = null;
   let workerPort = upstreamPort;
+  let workers = [];
   const pool = {
+    status() {
+      return workers;
+    },
     acquire(voice) {
       acquired.push(voice);
       const err = nextError;
@@ -86,6 +90,22 @@ async function main() {
   const health = await request(port, { path: '/api/v1/' });
   assert.equal(health.res.statusCode, 200);
   assert.deepEqual(JSON.parse(health.body), { status: 'ok' });
+  assert.deepEqual(acquired, []);
+
+  // The monitoring health check follows the default voice's worker.
+  const healthStatus = async () =>
+    (await request(port, { path: '/api/v1/health' })).res.statusCode;
+  assert.equal(await healthStatus(), 503);
+  workers = [{ voice: 'aoi', ready: true, stopping: false }];
+  assert.equal(await healthStatus(), 503);
+  workers.push({ voice: 'kiritan', ready: false, stopping: false });
+  assert.equal(await healthStatus(), 503);
+  workers[1].ready = true;
+  const up = await request(port, { path: '/api/v1/health' });
+  assert.equal(up.res.statusCode, 200);
+  assert.deepEqual(JSON.parse(up.body), { status: 'ok' });
+  workers[1].stopping = true;
+  assert.equal(await healthStatus(), 503);
   assert.deepEqual(acquired, []);
 
   // GET requests go to the named voice and come back unchanged.

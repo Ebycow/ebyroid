@@ -8,6 +8,20 @@ services:
     image: ebyroid-wine
     restart: unless-stopped
     init: false # tini をイメージ側で使う
+    # ログのローテーション (最大 10MB x 5 ファイル)。変更したら docker compose up -d で反映
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+    # デフォルト話者のワーカーが応答できるか。外部監視 (Better Stack) へのハートビートもこれを見る
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-m", "5", "-o", "/dev/null", "http://127.0.0.1:4090/api/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+      start_interval: 5s
     environment:
       EBYROID_PORT: 4090
       # ワーカー数の上限。デフォルト話者は常駐し、ほかの話者は必要なときに 1 話者 1 ワーカーで起動する
