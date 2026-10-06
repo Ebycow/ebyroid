@@ -67,6 +67,14 @@ async function main() {
     const health = await request(port, '/api/v1/health');
     assert.equal(health.res.statusCode, 200);
 
+    // Without a configured list, only the voice in use is listed.
+    const voices = await request(port, '/api/v1/voices');
+    assert.equal(voices.res.statusCode, 200);
+    assert.deepEqual(JSON.parse(voices.body), {
+      default: 'default',
+      voices: [{ name: 'default', default: true }],
+    });
+
     const { res, body } = await request(port, '/api/v1/audiofile?text=test');
     assert.equal(res.statusCode, 500);
     assert.equal(Number(res.headers['content-length']), body.byteLength);

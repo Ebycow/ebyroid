@@ -108,6 +108,18 @@ async function main() {
   assert.equal(await healthStatus(), 503);
   assert.deepEqual(acquired, []);
 
+  // The voice list comes from the config and never wakes a worker.
+  const voices = await request(port, { path: '/api/v1/voices' });
+  assert.equal(voices.res.statusCode, 200);
+  assert.deepEqual(JSON.parse(voices.body), {
+    default: 'kiritan',
+    voices: [
+      { name: 'kiritan', default: true },
+      { name: 'aoi', default: false },
+    ],
+  });
+  assert.deepEqual(acquired, []);
+
   // GET requests go to the named voice and come back unchanged.
   const get = await request(port, {
     path: '/api/v1/audiostream?text=a&name=aoi',

@@ -240,6 +240,30 @@ None.
 Complete data for a `.wav` file.\
 Any modern browser should support either to play or to download it.
 
+### `GET /api/v1/voices`
+
+#### response types
+
+- `200 OK` => `application/json`
+
+#### response body
+
+Every configured voice in config order, with the default voice marked.
+Use a `name` from this list as the `name` parameter of the other endpoints.
+
+```json
+{
+  "default": "kiritan",
+  "voices": [
+    { "name": "kiritan", "default": true },
+    { "name": "aoi", "default": false }
+  ]
+}
+```
+
+In multi-process mode the primary answers from the config, so this never starts
+a worker.
+
 ## FAQ
 
 ### Why do I have to use 32-bit node?
