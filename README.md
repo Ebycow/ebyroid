@@ -151,10 +151,16 @@ so `baseDirPath` in `docker/ebyroid.conf.json` must look like
 `--workers` (3 by default here). `EBYROID_WORKER_IDLE_TIMEOUT_MS` sets
 `--worker-idle-timeout-ms`.
 
-`bin/`, `lib/`, `index.js` and `package.json` are mounted into the container,
-so `docker compose restart` applies changes to them and to the config file.
-Run `docker compose up -d --build` after changing `src/`, `CMakeLists.txt` or
-the dependencies.
+The image contains the JavaScript sources. When you run Docker Compose in this
+directory, `compose.override.yaml` also mounts `bin/`, `lib/`, `index.js` and
+`package.json` into the container, so `docker compose restart` applies changes
+to them and to the config file. Run `docker compose up -d --build` after
+changing `src/`, `CMakeLists.txt` or the dependencies.
+
+A prebuilt image is published to `ghcr.io/ebycow/ebyroid-wine` (amd64) on every
+push to master, tagged `latest` and with the full commit ID. It does not contain
+any VOICEROID files; mount your copy at `/voiceroid` and the config at
+`/etc/ebyroid/ebyroid.conf.json` as `compose.yaml` does.
 
 Node.js under wine cannot write to a Unix pipe, so the container writes the
 server log to a file and streams it to `docker compose logs`.

@@ -1,0 +1,10 @@
+# このディレクトリで docker compose を使うときだけ読み込まれる（ttshub などから extends したときは読まない）
+# JS をマウントするので、bin/ lib/ index.js package.json の修正は docker compose restart で反映
+# (src/ の C++ を変えたときは docker compose up -d --build)
+services:
+  ebyroid:
+    volumes:
+      - ./bin:/app/bin:ro
+      - ./lib:/app/lib:ro
+      - ./index.js:/app/index.js:ro
+      - ./package.json:/app/package.json:ro

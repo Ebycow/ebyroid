@@ -36,11 +36,5 @@ services:
       # Windows からコピーした VOICEROID+ インストールディレクトリ (Aoi, KiritanEX などを含む)
       # 既定ではリポジトリ直下の AHS/ (git 管理外) を使う
       - ${VOICEROID_DIR:-./AHS/VOICEROID+}:/voiceroid:ro
-      # JS はマウントするので、修正は docker compose restart で反映
-      # (src/ の C++ を変えたときは docker compose up -d --build)
-      - ./bin:/app/bin:ro
-      - ./lib:/app/lib:ro
-      - ./index.js:/app/index.js:ro
-      - ./package.json:/app/package.json:ro
       # 話者設定。編集したら docker compose restart で反映
       - ${EBYROID_CONFIG:-./docker/ebyroid.conf.json}:/etc/ebyroid/ebyroid.conf.json:ro

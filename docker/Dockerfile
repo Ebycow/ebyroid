@@ -72,8 +72,11 @@ RUN curl -fsSLo /tmp/node.zip https://nodejs.org/dist/v${NODE_VERSION}/node-v${N
 COPY --from=deps /app/node_modules /app/node_modules
 COPY --from=addon /src/build/ebyroid.node /app/dll/ebyroid.node
 COPY docker/entrypoint.sh /entrypoint.sh
+# 開発では compose.override.yaml でマウントし、作り直さずに差し替える
+COPY package.json index.js /app/
+COPY bin /app/bin
+COPY lib /app/lib
 
-# bin/ lib/ index.js package.json は compose でマウントする
 WORKDIR /app
 EXPOSE 4090
 # -g: 停止時の SIGTERM をプロセスグループ全体 (wine, Xvfb, tail) に送る
