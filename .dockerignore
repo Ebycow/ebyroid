@@ -1,7 +1,10 @@
-# イメージのビルドに使うものだけを送る (JS は compose でマウントする)
+# イメージのビルドに使うものだけを送る
 *
 !CMakeLists.txt
 !src/
 !docker/
 !package.json
 !npm-shrinkwrap.json
+!bin/
+!lib/
+!index.js
