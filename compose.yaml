@@ -5,7 +5,8 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile
-    image: ebyroid-wine
+    # 開発用の複製では .env で EBYROID_IMAGE=ebyroid-wine:dev にして、本番のイメージを上書きしないようにする
+    image: ${EBYROID_IMAGE:-ebyroid-wine}
     restart: unless-stopped
     init: false # tini をイメージ側で使う
     # ログのローテーション (最大 10MB x 5 ファイル)。変更したら docker compose up -d で反映

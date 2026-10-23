@@ -1,6 +1,7 @@
 # VOICEROID+ と ebyroid (win32-ia32) を wine で動かすイメージ
 # ネイティブアドオンは MinGW-w64 でクロスビルドし、Windows 版 node.exe で JS をそのまま動かす
-ARG NODE_VERSION=12.13.1
+# 32bit Windows 版 (win-x86) が配布されているのは 22 系まで (23 以降は廃止)
+ARG NODE_VERSION=22.23.4
 
 # ---- ebyroid.node (win32-ia32) を MinGW-w64 でビルド ----
 FROM debian:bookworm-slim AS addon
@@ -33,11 +34,11 @@ RUN cmake -S . -B build \
  && cmake --build build -j"$(nproc)"
 
 # ---- node_modules (中身は JS だけなので Linux の npm で入れる) ----
-FROM node:12-bullseye-slim AS deps
+FROM node:22-bookworm-slim AS deps
 WORKDIR /app
 COPY package.json npm-shrinkwrap.json ./
 # package.json の os/arch (win32/ia32) チェックと、cmake-js による install ビルドは飛ばす
-RUN npm ci --only=production --ignore-scripts --force --no-audit --no-fund
+RUN npm ci --omit=dev --ignore-scripts --force --no-audit --no-fund
 
 # ---- 実行環境 ----
 FROM debian:bookworm-slim
@@ -60,7 +61,8 @@ RUN dpkg --add-architecture i386 \
 
 # 32bit プレフィックスを作る
 # (VOICEROID+ 側の msvcr100/msvcp100 はインストールディレクトリに同梱されている)
-RUN xvfb-run -a sh -c 'wineboot --init && wineserver -w'
+# win32 プレフィックスの既定は Windows 7 で、Node.js 22 は 8.1 未満だと起動しないので Windows 10 にする
+RUN xvfb-run -a sh -c 'wineboot --init && winecfg /v win10 && wineserver -w'
 
 # Windows 版 node.exe (ia32)
 RUN curl -fsSLo /tmp/node.zip https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-win-x86.zip \
