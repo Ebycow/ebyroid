@@ -140,7 +140,7 @@ Copy `C:\Program Files (x86)\AHS` from Windows to `AHS/` in this repository
 
 ```sh
 cp docker/ebyroid.conf.example.json docker/ebyroid.conf.json
-docker compose up -d --build
+docker compose up -d
 ```
 
 `AHS/VOICEROID+` is mounted at `/voiceroid` (set `VOICEROID_DIR` in `.env` to
@@ -151,16 +151,20 @@ so `baseDirPath` in `docker/ebyroid.conf.json` must look like
 `--workers` (3 by default here). `EBYROID_WORKER_IDLE_TIMEOUT_MS` sets
 `--worker-idle-timeout-ms`.
 
-The image contains the JavaScript sources. When you run Docker Compose in this
-directory, `compose.override.yaml` also mounts `bin/`, `lib/`, `index.js` and
-`package.json` into the container, so `docker compose restart` applies changes
-to them and to the config file. Run `docker compose up -d --build` after
-changing `src/`, `CMakeLists.txt` or the dependencies.
+Compose uses the prebuilt image `ghcr.io/ebycow/ebyroid-wine` (amd64), published
+on every push to master and tagged `latest` and with the full commit ID. It
+does not contain any VOICEROID files; they and the config are mounted as above.
 
-A prebuilt image is published to `ghcr.io/ebycow/ebyroid-wine` (amd64) on every
-push to master, tagged `latest` and with the full commit ID. It does not contain
-any VOICEROID files; mount your copy at `/voiceroid` and the config at
-`/etc/ebyroid/ebyroid.conf.json` as `compose.yaml` does.
+```sh
+docker compose pull && docker compose up -d                                          # update
+EBYROID_IMAGE=ghcr.io/ebycow/ebyroid-wine:<commit ID> docker compose up -d          # roll back
+```
+
+To run your local sources instead, use `docker compose up -d --build`. Changes
+to `bin/`, `lib/` or `index.js` only rebuild the last layer, so this takes a few
+seconds. On a machine that also runs another copy, set
+`EBYROID_IMAGE=ebyroid-wine:dev` in `.env` so the build does not replace the
+other copy's image.
 
 Node.js under wine cannot write to a Unix pipe, so the container writes the
 server log to a file and streams it to `docker compose logs`.
