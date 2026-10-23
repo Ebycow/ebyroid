@@ -1,12 +1,15 @@
 # Linux で VOICEROID+ と ebyroid を wine 上で動かす
 # 使い方は README の「Docker (Linux / wine)」を参照
+# 新しい版にするときは docker compose pull && docker compose up -d
 services:
   ebyroid:
+    # 既定では GHCR に公開しているイメージを使う（docker compose pull で更新）。--build を付けると手元でビルドする
+    # 開発用の複製では .env で EBYROID_IMAGE=ebyroid-wine:dev にして、本番のイメージを上書きしないようにする
+    # 前の版に戻すときは EBYROID_IMAGE=ghcr.io/ebycow/ebyroid-wine:<コミット ID>
+    image: ${EBYROID_IMAGE:-ghcr.io/ebycow/ebyroid-wine:latest}
     build:
       context: .
       dockerfile: docker/Dockerfile
-    # 開発用の複製では .env で EBYROID_IMAGE=ebyroid-wine:dev にして、本番のイメージを上書きしないようにする
-    image: ${EBYROID_IMAGE:-ebyroid-wine}
     restart: unless-stopped
     init: false # tini をイメージ側で使う
     # ログのローテーション (最大 10MB x 5 ファイル)。変更したら docker compose up -d で反映
