@@ -1,10 +1,10 @@
-# master に入ったら、wine で動かすイメージを GHCR に公開する
+# wine で動かすイメージを GHCR に公開する
 # VOICEROID のライブラリは含めない（使う人がマウントする）
+# master では ci.yml がテストを通してから呼ぶ。手動でも実行できる
 name: Publish image
 
 on:
-  push:
-    branches: [master]
+  workflow_call:
   workflow_dispatch:
 
 permissions:

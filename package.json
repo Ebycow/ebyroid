@@ -54,6 +54,8 @@
     "install": "run-p build:release",
     "prestart": "@powershell -Command if(-not(Test-Path ebyroid.conf.json)) { node ./bin/main.js configure }",
     "start": "@powershell -Command node ./bin/main.js start",
+    "test": "node --test \"test/**/*_unit_test.js\"",
+    "lint": "eslint bin lib test index.js",
     "test:run": "@powershell -Command $env:DEBUG='*';node ./test/test_run",
     "build:debug": "run-s build:clean build:prepare build:debug:compile build:debug:copy",
     "build:debug:copy": "@powershell -Command Copy-Item ./build/debug/ebyroid.node -Destination dll",
