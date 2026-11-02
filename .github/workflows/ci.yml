@@ -41,6 +41,11 @@ jobs:
 
       - run: npm test
 
+      # 本番依存の既知の脆弱性を表示する。修正待ちのもの (Ebycow/ebyroid#4) があるので、今は CI を落とさない
+      - name: npm audit (production)
+        if: matrix.node == '22'
+        run: npm audit --omit=dev || echo "::warning::npm audit found vulnerabilities in production dependencies (see Ebycow/ebyroid#4)"
+
   # Dockerfile とワークフローの静的チェック、イメージのビルド (push しない)、
   # wine 上のスモークテスト、脆弱性スキャン
   image:
