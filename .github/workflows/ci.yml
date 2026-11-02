@@ -41,8 +41,51 @@ jobs:
 
       - run: npm test
 
+  # Dockerfile とワークフローの静的チェック、イメージのビルド (push しない)、
+  # wine 上のスモークテスト、脆弱性スキャン
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: actionlint
+        run: |
+          bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/v1.7.7/scripts/download-actionlint.bash) 1.7.7
+          ./actionlint -color
+
+      - uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: docker/Dockerfile
+          config: .hadolint.yaml
+          failure-threshold: warning
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          platforms: linux/amd64
+          load: true
+          push: false
+          tags: ebyroid-wine:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - run: test/image/smoke.sh ebyroid-wine:ci
+
+      # 修正版のある CRITICAL/HIGH を表示する
+      # npm の本番依存に修正待ちのもの (Ebycow/ebyroid#4) があるので、今は CI を落とさない
+      - uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ebyroid-wine:ci
+          format: table
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: '0'
+
   publish:
-    needs: test
+    needs: [test, image]
     if: github.event_name == 'push' && github.ref == 'refs/heads/master'
     permissions:
       contents: read

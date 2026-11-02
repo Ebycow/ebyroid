@@ -44,3 +44,6 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          # どのワークフロー・コミットから作られたか (provenance) と、中身の一覧 (SBOM) を添付する
+          provenance: mode=max
+          sbom: true

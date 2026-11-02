@@ -1,0 +1,5 @@
+# hadolint の設定 (CI の image ジョブで docker/Dockerfile に使う)
+ignored:
+  # apt のパッケージはバージョンを固定しない。固定すると Debian のセキュリティ更新が入らなくなるため。
+  # イメージの脆弱性は Trivy で見る
+  - DL3008
