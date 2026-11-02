@@ -1,0 +1,98 @@
+# PR と master への push で lint とテストを回す
+# master では、テストが通ったときだけ GHCR へイメージを公開する
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    name: test (Node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 22: 今の実行環境 (wine 上の win-x86 node.exe と同じ系列)
+        # 24: API 側を 64bit 化したときの想定
+        node: ['22', '24']
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+          cache-dependency-path: npm-shrinkwrap.json
+
+      # package.json の os/arch (win32/ia32) チェックと、cmake-js による install ビルドは飛ばす
+      - run: npm ci --ignore-scripts --force --no-audit --no-fund
+
+      - run: npm run lint
+
+      - run: npm test
+
+      # 本番依存の既知の脆弱性を表示する。修正待ちのもの (Ebycow/ebyroid#4) があるので、今は CI を落とさない
+      - name: npm audit (production)
+        if: matrix.node == '22'
+        run: npm audit --omit=dev || echo "::warning::npm audit found vulnerabilities in production dependencies (see Ebycow/ebyroid#4)"
+
+  # Dockerfile とワークフローの静的チェック、イメージのビルド (push しない)、
+  # wine 上のスモークテスト、脆弱性スキャン
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: actionlint
+        run: |
+          bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/03d0035246f3e81f36aed592ffb4bebf33a03106/scripts/download-actionlint.bash) 1.7.7
+          ./actionlint -color
+
+      - uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387 # v3.5.0
+        with:
+          dockerfile: docker/Dockerfile
+          config: .hadolint.yaml
+          failure-threshold: warning
+
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: .
+          file: docker/Dockerfile
+          platforms: linux/amd64
+          load: true
+          push: false
+          tags: ebyroid-wine:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - run: test/image/smoke.sh ebyroid-wine:ci
+
+      # 修正版のある CRITICAL/HIGH を表示する
+      # npm の本番依存に修正待ちのもの (Ebycow/ebyroid#4) があるので、今は CI を落とさない
+      - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ebyroid-wine:ci
+          format: table
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: '0'
+
+  publish:
+    needs: [test, image]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/publish.yml

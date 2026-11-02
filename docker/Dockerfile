@@ -6,6 +6,8 @@ ARG NODE_VERSION=22.23.4
 # ---- ebyroid.node (win32-ia32) を MinGW-w64 でビルド ----
 FROM debian:bookworm-slim AS addon
 ARG NODE_VERSION
+# パイプの途中 (curl など) で失敗したらビルドを止める
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       g++-mingw-w64-i686-posix cmake make curl ca-certificates \

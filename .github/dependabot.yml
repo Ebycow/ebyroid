@@ -1,0 +1,25 @@
+# 依存の更新 PR を毎週作る。どの PR も CI (lint・テスト・イメージのスモークテスト) を通してからマージする
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    # マイナー・パッチはまとめる。メジャーは 1 件ずつ (Ebycow/ebyroid#4 の残件もここで来る)
+    groups:
+      production-minor:
+        dependency-type: production
+        update-types: [minor, patch]
+      development-minor:
+        dependency-type: development
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    # SHA で固定している Action も、コメントのバージョンごと更新される
+    groups:
+      actions-minor:
+        update-types: [minor, patch]
