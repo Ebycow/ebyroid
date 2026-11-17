@@ -219,11 +219,11 @@ With `--workers 3`, the workers for Aoi and Akane took 43 s and 51 s to start.
 After that, memory and swap were full and the board stopped responding until it
 was power-cycled. With one worker, short sentences are about as fast as on the
 Jetson Nano. However, every voice change reloads the voice library and takes
-about 10 seconds, so the Pi 3 is best used with one voice.
+about 7 seconds, so the Pi 3 is best used with one voice.
 
 The SD card makes setup slow. The card used here was a 32 GB SDHC card from
 2017 that wrote about 8 MB/s sequentially and 166 KB/s with 4 KB synchronous
-writes. On it, `docker compose pull` took 34 minutes for the 5.6 GB image, and
+writes. On it, `docker compose pull` took 13 minutes for the 1.9 GB image, and
 copying `AHS/VOICEROID+` (950 MB) took 7 minutes. The board had also reported
 under-voltage (`vcgencmd get_throttled` returned `0x50000`), so a better power
 supply may help a little.
@@ -258,58 +258,66 @@ adb forward tcp:4090 tcp:4090   # then: curl localhost:4090/api/v1/voices
 Android is reported to stop the terminal app, and the container with it, to
 save battery or memory. This did not happen here with the app in the
 foreground, but keep it in mind before using the phone as a server. Storage is
-much faster than an SD card: `docker compose pull` took 3 minutes, and copying
+much faster than an SD card: `docker compose pull` took 2.5 minutes, and copying
 `AHS/VOICEROID+` over SSH took 38 seconds.
 
 #### arm64 performance
 
 Each board ran [`bench/run.sh`](#running-the-benchmark) with the same published
-image (`sha256:933bbf05…`) and three VOICEROID+ voices (Kiritan, Aoi, Akane).
-curl inside the container sends `POST /api/v2/audiostream`. Times are medians.
-The Pi 4 also ran Pi-hole and another ebyroid during the run. The Pixel 6 had
-no case and was charging, with no extra cooling. Its CPU warmed from 38 °C to
-49 °C over the runs without throttling (`adb shell dumpsys thermalservice`).
-With 4 GB it ran the benchmark three times: its times are medians over all
-requests of the three runs, and a range shows how the runs differed.
+image (`sha256:44f2e83a…`, built from the commit that finishes speech jobs on
+`RAWBUF_CLOSE`) and three VOICEROID+ voices (Kiritan, Aoi, Akane). curl inside
+the container sends `POST /api/v2/audiostream`. Times are medians. The Pi 4
+also ran Pi-hole and another, idle ebyroid during the run. The Pixel 6 (4 GB
+VM) had no case and was charging, with no extra cooling. Its skin temperature
+stayed between 27 °C and 32 °C without throttling
+(`adb shell dumpsys thermalservice`). It ran the benchmark three times: its
+times are medians over all requests of the three runs, and a range shows how
+the runs differed.
 
-With `--workers 3` (the Compose default; the Pi 3 and the Pixel 6 with 1 GB do
-not have enough memory):
+With `--workers 3` (the Compose default; the Pi 3 does not have enough memory):
 
 | | Raspberry Pi 4 (4 GB) | Jetson Nano (4 GB) | Pixel 6 (4 GB VM) |
 | :-- | --: | --: | --: |
-| Container start until healthy (default voice worker ready) | 31 s | 37 s | 17–32 s |
-| Worker start (first request for another voice) | 18–19 s | 21 s | 9–15 s |
-| Short sentence (17 characters, about 3.4 s of audio) | 0.20 s | 0.34 s | 0.18 s |
-| Long sentence (85 characters, about 16 s of audio) | 0.69 s | 1.5 s | 0.41 s |
-| Time to first audio, long sentence | 0.11 s | 0.21 s | 0.15 s |
-| Three voices in parallel, short sentence | 0.22 s, 6.4 requests/s | 0.36 s, 5.7 requests/s | 0.15 s, 7.8–12.6 requests/s |
-| Memory, primary process / each worker | 310 MB / 420–430 MB | 320 MB / 430–440 MB | 310 MB / 390–430 MB |
+| Container start until healthy (default voice worker ready) | 31 s | 37 s | 27–35 s |
+| Worker start (first request for another voice) | 18 s | 21 s | 15–18 s |
+| Short sentence (17 characters, about 3.4 s of audio) | 0.18 s | 0.34 s | 0.16 s |
+| Long sentence (85 characters, about 16 s of audio) | 0.67 s | 1.5 s | 0.44 s |
+| Time to first audio, long sentence | 0.11 s | 0.21 s | 0.12 s |
+| Three voices in parallel, short sentence | 0.24 s, 10.6 requests/s | 0.38 s, 7.1 requests/s | 0.18 s, 9.8–15.8 requests/s |
+| Memory, primary process / each worker | 310 MB / 420–430 MB | 320 MB / 420–430 MB | 310 MB / 420–430 MB |
 
 With `--workers 1` (Kiritan only, then alternating voices):
 
-| | Raspberry Pi 4 (4 GB) | Jetson Nano (4 GB) | Raspberry Pi 3 (1 GB) | Pixel 6 (1 GB VM) | Pixel 6 (4 GB VM) |
-| :-- | --: | --: | --: | --: | --: |
-| Container start until healthy | 20 s | 21 s | 43 s | 24 s | 14–18 s |
-| Short sentence (about 3.2 s of audio) | 0.19 s | 0.32 s | 0.35 s | 0.13 s | 0.16 s |
-| Long sentence (about 15 s of audio), median and range | 1.2 s (0.68–2.0 s) | 1.5 s (1.4–2.6 s) | 2.1 s (1.6–3.0 s) | 0.48 s (0.36–0.89 s) | 0.43 s (0.30–1.08 s) |
-| Extra time per voice change | 3.2 s | 2.9 s | 9.8 s | 1.6 s | 1.1–1.4 s |
-| Memory | 410 MB | 420 MB | 350 MB | 240 MB | 400–410 MB |
+| | Raspberry Pi 4 (4 GB) | Jetson Nano (4 GB) | Raspberry Pi 3 (1 GB) | Pixel 6 (4 GB VM) |
+| :-- | --: | --: | --: | --: |
+| Container start until healthy | 19 s | 21 s | 52 s | 16–22 s |
+| Short sentence (about 3.2 s of audio) | 0.15 s | 0.31 s | 0.35 s | 0.13 s |
+| Long sentence (about 15 s of audio), median and range | 0.64 s (0.63–0.67 s) | 1.4 s (1.4–1.8 s) | 1.6 s (1.6–2.5 s) | 0.41 s (0.33–0.49 s) |
+| Extra time per voice change | 2.6 s | 2.9 s | 6.7 s | 1.4–1.9 s |
+| Memory | 410 MB | 430 MB | 340 MB | 410 MB |
 
-The Pixel 6 is the fastest of these machines. With 4 GB, it synthesizes short
-sentences a little faster than the Pi 4, and long sentences in about 60%
-(`--workers 3`) or 35% (`--workers 1`) of the Pi 4's time. It also starts
-workers faster and changes voices in less than half the time. The 1 GB column
-is a single run; its short and long sentences fall within the spread of the
-4 GB runs, so the extra memory mainly speeds up starting and voice changes.
+`docker compose pull` of this image (490 MB to download, 1.9 GB unpacked) with
+no earlier ebyroid image on the board, one board at a time on the same home
+connection:
 
-The Pi 4 synthesizes about twice as fast as the Jetson Nano. On the Pi 4 and
-the Jetson, some requests take 0.5–0.7 s longer to finish after their first
-audio arrives. With `--workers 3`, this happened to 20 of 90 short requests on
-the Pi 4 and 12 of 90 on the Jetson, but only to 11 of 270 on the Pixel 6. That
-is why the long sentences with `--workers 1` vary so much: the Pi 4's took
-either about 0.65 s or about 1.2 s. On the Pi 3 and the Pixel 6 with 1 GB, part
-of the process sits in swap (the Pixel's virtual machine had 350 MB swapped out
-at the end), so their memory figures are lower.
+| Raspberry Pi 4 (SD card) | Jetson Nano (SD card) | Raspberry Pi 3 (SD card) | Pixel 6 |
+| --: | --: | --: | --: |
+| 6 min 49 s | 3 min 0 s | 13 min 10 s | 2 min 25 s |
+
+The Pixel 6 is the fastest of these machines. It synthesizes short sentences a
+little faster than the Pi 4 and long sentences in about two thirds of the
+Pi 4's time, and changes voices in about two thirds of the time. The Pi 4
+synthesizes about twice as fast as the Jetson Nano. On the Pi 3, part of the
+process sits in swap, so its memory figure is lower.
+
+With the image before that commit (`sha256:933bbf05…`), some requests took
+0.5–0.7 s longer to finish after their first audio arrived: with
+`--workers 3`, 20 of 90 short requests on the Pi 4, 12 of 90 on the Jetson and
+11 of 270 on the Pixel 6. With this image, none did. This is the main
+difference between the two images: on the Pi 4, the long sentence with
+`--workers 1` went from 1.2 s (0.68–2.0 s) to 0.64 s, and three voices in
+parallel from 6.4 to 10.6 requests/s. The other times changed little.
+
 Voice changes with `--workers 1` reload the voice library and are much slower
 than on amd64, so give each frequently used voice its own worker with
 `--workers N` where memory allows.
@@ -479,7 +487,7 @@ The v2 endpoint improves time to first audio rather than total synthesis time.
 With the native engine's minimum accepted 128 KiB PCM callback buffer, short
 utterances may still fit in one chunk and see little latency improvement.
 
-That said, however, switching voiceroid within one process acquires the inter-thread lock and takes a couple of hundreds of millis (200ms-400ms practically on Windows, about 800ms under wine, about 1.1–1.6 seconds under wine on a Pixel 6, about 3 seconds on a Raspberry Pi 4 or Jetson Nano, and about 10 seconds on a Raspberry Pi 3) by itself. With `--workers 1`, frequent voice changes slow the whole app down; give each frequently used voice its own worker with `--workers N` instead.
+That said, however, switching voiceroid within one process acquires the inter-thread lock and takes a couple of hundreds of millis (200ms-400ms practically on Windows, about 800ms under wine, about 1.4–1.9 seconds under wine on a Pixel 6, about 3 seconds on a Raspberry Pi 4 or Jetson Nano, and about 7 seconds on a Raspberry Pi 3) by itself. With `--workers 1`, frequent voice changes slow the whole app down; give each frequently used voice its own worker with `--workers N` instead.
 
 
 ## License
