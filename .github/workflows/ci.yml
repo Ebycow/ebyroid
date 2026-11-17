@@ -65,12 +65,13 @@ jobs:
           # ubuntu-26.04 (ubuntu-latest) の Docker で動かすと、wineserver が
           # "socket: Function not implemented" で起動しないので、24.04 に固定する
           # max_size_mb: 展開後のイメージの大きさの上限 (MB)。超えたら CI を落とす
+          # (strip とハードリンクを入れたときは amd64 1162 MB、arm64 1857 MB。1 割ほど余裕を持たせる)
           - arch: amd64
             runner: ubuntu-24.04
-            max_size_mb: 2000
+            max_size_mb: 1300
           - arch: arm64
             runner: ubuntu-24.04-arm
-            max_size_mb: 2500
+            max_size_mb: 2000
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
