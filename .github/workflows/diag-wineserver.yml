@@ -1,6 +1,7 @@
 # 診断用: arm64 のイメージのビルドが GitHub の ARM ランナーで終わらない原因を調べる (Ebycow/ebyroid#7)
 # wineboot の RUN で xvfb-run と Xvfb が CPU 0 のまま止まり、wine は起動していなかった (run 43994741622)
-# ここでは wine を使わず、xvfb-run / Xvfb だけで再現するかを見る
+# docker run では xvfb-run は止まらない (run 43997527121)。docker build の RUN で、
+# SHELL を bash -o pipefail にしたときだけ止まるのかを見る
 # このブランチへの push でだけ動く。原因が分かったらワークフローごと消す
 name: Diagnose arm64 build
 
@@ -12,51 +13,38 @@ permissions:
   contents: read
 
 jobs:
-  xvfb:
-    name: xvfb (${{ matrix.runner }})
+  xvfb-in-build:
+    name: xvfb in docker build (${{ matrix.runner }})
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 20
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
         runner: [ubuntu-24.04-arm, ubuntu-24.04]
     steps:
-      - name: Host
-        run: |
-          uname -a
-          docker version --format '{{.Server.Version}}'
-          systemctl show docker containerd -p LimitNOFILE
-
-      - name: Build small images with Xvfb
-        run: |
-          for d in trixie bookworm; do
-            printf 'FROM debian:%s-slim\nRUN apt-get update && apt-get install -y --no-install-recommends xvfb xauth strace procps && rm -rf /var/lib/apt/lists/*\n' "$d" |
-              docker build -q -t "xvfb:$d" -
-          done
-
-      # 結果はすべて表示し、ステップ自体は落とさない
-      - name: xvfb-run under different settings
+      # 1 つの RUN が止まっても先へ進めるよう、docker build ごとに 90 秒で打ち切る
+      - name: xvfb-run in RUN with different shells
         run: |
           try() {
-            name=$1; shift
+            name=$1 base=$2 shell=$3 run=$4
             echo "::group::$name"
+            {
+              echo "FROM debian:$base-slim"
+              echo "RUN apt-get update && apt-get install -y --no-install-recommends xvfb xauth procps && rm -rf /var/lib/apt/lists/*"
+              [ -n "$shell" ] && echo "SHELL $shell"
+              echo "RUN $run"
+            } > "Dockerfile.$name"
+            cat "Dockerfile.$name" | tail -n 2
             start=$(date +%s)
-            docker run --rm "$@" sh -c 'echo "nofile=$(ulimit -n)/$(ulimit -Hn)"; timeout 60 xvfb-run -a sh -c "echo XVFB_OK"; echo "exit=$?"' || true
-            echo "took $(( $(date +%s) - start ))s"
+            timeout 90 docker build --no-cache --progress=plain -f "Dockerfile.$name" . 2>&1 | grep -E 'XVFB_OK|PID1=|SigIgn|SigCgt|ERROR|DONE' | tail -n 8
+            echo "result: exit=${PIPESTATUS[0]} took $(( $(date +%s) - start ))s"
             echo "::endgroup::"
           }
-          for d in trixie bookworm; do
-            try "$d default" "xvfb:$d"
-            try "$d nofile=1024" --ulimit nofile=1024:1024 "xvfb:$d"
-            try "$d init" --init "xvfb:$d"
+          # PID 1 とそのシグナルの状態も出す (SigIgn に USR1 = bit 10 (0x200) が立つと trap できない)
+          probe='grep -E "^Sig(Ign|Cgt)" /proc/self/status; echo PID1=$(cat /proc/1/cmdline | tr "\0" " ")'
+          for base in trixie bookworm; do
+            try "$base-sh"            "$base" ""                                     "xvfb-run -a sh -c 'echo XVFB_OK'"
+            try "$base-bash-pipefail" "$base" '["/bin/bash", "-o", "pipefail", "-c"]' "xvfb-run -a sh -c 'echo XVFB_OK'"
+            try "$base-bash-probe"    "$base" '["/bin/bash", "-o", "pipefail", "-c"]' "$probe; xvfb-run -a sh -c 'echo XVFB_OK'"
+            try "$base-sh-probe"      "$base" ""                                     "$probe; xvfb-run -a sh -c 'echo XVFB_OK'"
           done
-
-      # Xvfb を直接起動し、どこで止まるかを strace で見る
-      - name: strace Xvfb startup (trixie)
-        run: |
-          docker run --rm --cap-add SYS_PTRACE xvfb:trixie sh -c '
-            timeout 20 strace -f -tt -o /tmp/st Xvfb :5 -screen 0 1280x1024x24 -nolisten tcp > /tmp/x.log 2>&1
-            echo "Xvfb exit=$?"; cat /tmp/x.log
-            echo "--- last 40 syscalls"; tail -n 40 /tmp/st | cut -c1-200
-            echo "--- blocking calls"; grep -nE "futex|poll|select|epoll_wait|read\(|connect|getrandom|nanosleep" /tmp/st | tail -n 15 | cut -c1-200
-          ' || true
