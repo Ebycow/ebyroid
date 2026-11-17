@@ -178,15 +178,54 @@ unchanged on the Pi; Docker pulls the arm64 variant.
 
 Building on the Pi with `--build` also works, but the first build takes a while,
 mostly to create the wine prefix and to write the image to the SD card.
-On a Pi 4 a worker starts in about 16 seconds, and a short
-sentence takes about 0.3 seconds once its worker is running. Three workers with
-three VOICEROID+ voices use about 1.7 GB of memory (about 300 MB for the
-primary process and 430 MB per worker). `HODLL=libwow64fex.dll`
-switches the emulator to FEX, but with FEX the primary process crashed when it
-started a worker after forwarding a request.
+`HODLL=libwow64fex.dll` switches the emulator to FEX, but with FEX the primary
+process crashed when it started a worker after forwarding a request. See
+[arm64 performance](#arm64-performance) for numbers.
 
 Node.js under wine cannot write to a Unix pipe, so the container writes the
 server log to a file and streams it to `docker compose logs`.
+
+#### NVIDIA Jetson Nano (linux/arm64)
+
+The published arm64 image also runs on a Jetson Nano Developer Kit (4 GB,
+JetPack 4.6 / L4T R32.7, Ubuntu 18.04, kernel 4.9, 4K pages). The GPU is not
+used. JetPack 4 comes with Docker 20.10 and no Compose plugin, so two changes
+are needed:
+
+- Install the [Compose plugin](https://docs.docker.com/compose/install/linux/#install-the-plugin-manually)
+  (`docker-compose-linux-aarch64`) to `~/.docker/cli-plugins/docker-compose`.
+- Docker Engine 20.10 does not support `healthcheck.start_interval`, so remove
+  it in `compose.override.yaml`:
+
+  ```yaml
+  services:
+    ebyroid:
+      healthcheck:
+        start_interval: !reset null
+  ```
+
+#### arm64 performance
+
+Measured with the same published image on both boards, three VOICEROID+ voices
+(Kiritan, Aoi, Akane) and `--workers 3`, using `POST /api/v2/audiostream` from
+curl inside the container. Times are medians.
+
+| | Raspberry Pi 4 (4 GB) | Jetson Nano (4 GB) |
+| :-- | --: | --: |
+| Container start until healthy (default voice worker ready) | 32 s | 38–44 s |
+| Worker start (first request for another voice) | 16–19 s | 20–27 s |
+| Short sentence (17 characters, about 3.4 s of audio) | 0.18 s | 0.35 s |
+| Long sentence (85 characters, about 15 s of audio) | 0.69 s | 1.5 s |
+| Time to first audio, long sentence | 0.11 s | 0.21 s |
+| Three voices in parallel, short sentence | 0.23 s, 7.5 requests/s | 0.38 s, 5.6 requests/s |
+| `--workers 1`, extra time per voice change | about 2.6 s | about 2.8 s |
+| Memory, primary process / each worker | 310 MB / 420–430 MB | 310 MB / 430 MB |
+
+The Pi 4 synthesizes about twice as fast as the Jetson Nano. On both, some short
+requests (about 1 in 5 on the Pi and 1 in 9 on the Jetson) take 0.5–0.7 s
+longer to finish after their first audio arrives, with `--workers 1` as well. Voice changes
+with `--workers 1` reload the voice library and are much slower than on amd64,
+so give each frequently used voice its own worker with `--workers N`.
 
 
 ## API Endpoints of Standalone Server
@@ -332,7 +371,7 @@ The v2 endpoint improves time to first audio rather than total synthesis time.
 With the native engine's minimum accepted 128 KiB PCM callback buffer, short
 utterances may still fit in one chunk and see little latency improvement.
 
-That said, however, switching voiceroid within one process acquires the inter-thread lock and takes a couple of hundreds of millis (200ms-400ms practically on Windows, about 800ms under wine) by itself. With `--workers 1`, frequent voice changes slow the whole app down; give each frequently used voice its own worker with `--workers N` instead.
+That said, however, switching voiceroid within one process acquires the inter-thread lock and takes a couple of hundreds of millis (200ms-400ms practically on Windows, about 800ms under wine, and about 3 seconds under wine on a Raspberry Pi 4 or Jetson Nano) by itself. With `--workers 1`, frequent voice changes slow the whole app down; give each frequently used voice its own worker with `--workers N` instead.
 
 
 ## License
