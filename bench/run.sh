@@ -84,8 +84,15 @@ for W in "$@"; do
   log "## --workers $W"
   dc rm -sf ebyroid > /dev/null 2>&1
   t0=$(date +%s)
-  EBYROID_WORKERS=$W dc up -d --no-build > /dev/null 2>&1
+  # 関数呼び出しの前の代入は、古い dash（Ubuntu 18.04 の 0.5.8）では子プロセスに渡らない。
+  # サブシェルで export して、最後に .env の設定で立ち上げ直すときには残さない
+  (export EBYROID_WORKERS="$W"; dc up -d --no-build) > /dev/null 2>&1
   in_container wait-health
+  actual=$(dc exec -T ebyroid printenv EBYROID_WORKERS)
+  if [ "$actual" != "$W" ]; then
+    log "error: asked for --workers $W, but the container has EBYROID_WORKERS=$actual"
+    exit 1
+  fi
   log "start until healthy:            $(( $(date +%s) - t0 )) s"
   log "page size:                      $(dc exec -T ebyroid getconf PAGESIZE)"
 
