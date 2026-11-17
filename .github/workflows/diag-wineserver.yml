@@ -1,7 +1,7 @@
-# 診断用 (Ebycow/ebyroid#8): ubuntu-26.04 のランナーでコンテナ内の wineserver が
-# "socket: Function not implemented" で起動しない原因を切り分ける
+# 診断用: arm64 のイメージのビルドが GitHub の ARM ランナーで終わらない原因を調べる (Ebycow/ebyroid#7)
+# (#8 の診断は run 43989988126 / 43991301343 で済んだ)
 # このブランチへの push でだけ動く。原因が分かったらワークフローごと消す
-name: Diagnose wineserver (#8)
+name: Diagnose arm64 build
 
 on:
   push:
@@ -11,76 +11,41 @@ permissions:
   contents: read
 
 jobs:
-  diag:
-    name: diag (${{ matrix.runner }})
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        runner: [ubuntu-26.04, ubuntu-24.04]
+  arm64-build:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Host
         run: |
-          set -x
           uname -a
-          cat /proc/cmdline
-          docker version
-          docker info --format '{{.KernelVersion}} {{.SecurityOptions}} {{.DefaultRuntime}}'
-          runc --version || true
-          grep -E 'CONFIG_(IA32_EMULATION|COMPAT|X86_X32|SECCOMP)' "/boot/config-$(uname -r)" || true
-          aa-status 2>/dev/null | head -5 || true
+          getconf PAGESIZE
+          nproc
+          free -h
+          lscpu | grep -E 'Model name|Vendor|Flags' | cut -c1-200
+          docker version --format '{{.Server.Version}}'
 
-      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
-
-      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
-        with:
-          context: .
-          file: docker/Dockerfile
-          platforms: linux/amd64
-          load: true
-          push: false
-          tags: ebyroid-wine:diag
-          cache-from: type=gha,scope=diag
-          cache-to: type=gha,scope=diag,mode=max
-
-      # 結果はすべて表示し、ステップ自体は落とさない
-      - name: wine under different security options
+      # docker ドライバーでビルドするので、RUN の中のプロセスはホストの ps に見える
+      - name: Build with plain progress (gives up after 20 minutes)
         run: |
-          try() {
-            echo "::group::$1"
-            shift
-            docker run --rm "$@" --entrypoint /bin/sh ebyroid-wine:diag -c \
-              'timeout 120 xvfb-run -a wine cmd /c echo WINE_OK > /tmp/out.txt 2>&1; code=$?; cat /tmp/out.txt; echo "exit=$code"' || true
-            echo "::endgroup::"
-          }
-          try default
-          try seccomp-unconfined --security-opt seccomp=unconfined
-          try apparmor-unconfined --security-opt apparmor=unconfined
-          try privileged --privileged
-
-      # Docker 29.4.2 の既定プロファイルだけ socketcall を ENOSYS で拒否している (29.4.3 で元に戻った)
-      # 32bit の glibc は socket/socketpair を socketcall で呼ぶので、プロファイルを入れ替えて確かめる
-      - name: wine with the seccomp profiles of Docker 29.4.2 and 29.9.3
-        run: |
-          for v in 29.4.2 29.9.3; do
-            curl -fsSLo "seccomp-$v.json" \
-              "https://raw.githubusercontent.com/moby/moby/docker-v$v/vendor/github.com/moby/profiles/seccomp/default.json"
-            echo "::group::profile of Docker $v (socketcall: $(jq -c '[.syscalls[] | select(.names | index("socketcall")) | .action]' "seccomp-$v.json"))"
-            docker run --rm --security-opt "seccomp=$PWD/seccomp-$v.json" --entrypoint /bin/sh ebyroid-wine:diag -c \
-              'timeout 120 xvfb-run -a wine cmd /c echo WINE_OK > /tmp/out.txt 2>&1; code=$?; cat /tmp/out.txt; echo "exit=$code"' || true
-            echo "::endgroup::"
+          set +e
+          DOCKER_BUILDKIT=1 docker build --progress=plain --platform linux/arm64 \
+            -f docker/Dockerfile -t ebyroid-wine:diag . > build.log 2>&1 &
+          pid=$!
+          for i in $(seq 1 40); do
+            sleep 30
+            kill -0 "$pid" 2>/dev/null || break
+            echo "--- $((i * 30))s: $(tail -n 1 build.log | cut -c1-200)"
           done
-
-      # 既定の seccomp のまま wineserver を strace で追い、ENOSYS を返した syscall を出す
-      - name: strace wineserver
-        run: |
-          docker run --rm --cap-add SYS_PTRACE --entrypoint /bin/sh ebyroid-wine:diag -c '
-            apt-get update -qq && apt-get install -y -qq --no-install-recommends strace >/dev/null
-            timeout 30 strace -f -o /tmp/st wineserver -f -p0 > /tmp/ws.txt 2>&1
-            echo "wineserver exit=$?"; cat /tmp/ws.txt
-            echo "--- ENOSYS"; grep -n ENOSYS /tmp/st | head -40
-            echo "--- socket calls"; grep -nE "socket|pollhup|poll\(" /tmp/st | head -40
-            echo "--- personality / arch"; grep -nE "execve|personality" /tmp/st | head -10
-          ' || true
+          if kill -0 "$pid" 2>/dev/null; then
+            echo "::warning::build still running after 20 minutes"
+            echo "::group::processes"
+            ps -eo pid,ppid,etime,time,stat,args --forest | grep -vE '\[.*\]$' | cut -c1-220 | tail -n 80
+            echo "::endgroup::"
+            kill "$pid"
+          fi
+          wait "$pid"; echo "build exit=$?"
+          echo "::group::build log (last 150 lines)"
+          tail -n 150 build.log
+          echo "::endgroup::"
