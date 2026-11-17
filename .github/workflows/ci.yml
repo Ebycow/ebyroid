@@ -52,6 +52,8 @@ jobs:
   image:
     name: image (${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
+    # ビルドが止まったときに 6 時間 (既定) 待たないようにする。キャッシュなしの arm64 でも 30 分あれば終わる見込み
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:

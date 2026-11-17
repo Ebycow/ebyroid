@@ -60,18 +60,19 @@ RUN dpkg --add-architecture i386 \
 # 32bit の Windows アプリは 64bit プレフィックスの WoW64 で動く。
 FROM debian:trixie-slim AS wine-arm64
 ARG HANGOVER_VERSION
-SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+# SHELL を bash にするとこのあとのステージにも引き継がれ、docker build の RUN で xvfb-run が止まるので、
+# pipefail は使わずに、ファイルに保存してから展開する
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates curl \
  && mkdir /tmp/hangover \
- && curl -fsSL https://github.com/AndreRH/hangover/releases/download/hangover-${HANGOVER_VERSION}/hangover_${HANGOVER_VERSION}_debian13_trixie_arm64.tar \
-    | tar -x -C /tmp/hangover \
+ && curl -fsSLo /tmp/hangover.tar https://github.com/AndreRH/hangover/releases/download/hangover-${HANGOVER_VERSION}/hangover_${HANGOVER_VERSION}_debian13_trixie_arm64.tar \
+ && tar -x -C /tmp/hangover -f /tmp/hangover.tar \
       hangover-wine_${HANGOVER_VERSION}~trixie_arm64.deb \
       hangover-libarm64ecfex_${HANGOVER_VERSION}_arm64.deb \
       hangover-libwow64fex_${HANGOVER_VERSION}_arm64.deb \
       hangover-wowbox64_${HANGOVER_VERSION}_arm64.deb \
  && apt-get install -y --no-install-recommends /tmp/hangover/*.deb \
- && rm -rf /tmp/hangover /var/lib/apt/lists/*
+ && rm -rf /tmp/hangover /tmp/hangover.tar /var/lib/apt/lists/*
 # x86 のエミュレータ。wowbox64.dll: Box64 / libwow64fex.dll: FEX
 # FEX (Hangover 11.16) では、プライマリが転送したあとに次のワーカーを起動すると
 # プライマリの node.exe がアクセス違反で落ちる。Box64 ではこれが起きず、合成も速い (Pi 4 で 1 文 0.3 秒ほど)
