@@ -111,3 +111,6 @@ dist
 
 # TernJS port file
 .tern-port
+
+# bench/run.sh の結果（機械ごとの記録。README に載せる数字はここから拾う）
+bench/results/

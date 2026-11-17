@@ -172,9 +172,10 @@ The same Dockerfile builds an arm64 image. It uses
 [Hangover](https://github.com/AndreRH/hangover), a wine for ARM64, and runs the
 32-bit `node.exe` and the VOICEROID libraries through Box64 inside a 64-bit
 (WoW64) prefix. This was tested on a Raspberry Pi 4 (4 GB, Debian 13, 4K
-pages). Kernels with 16K pages, such as the Raspberry Pi 5 default, are not
-supported. The published image includes arm64, so the commands above work
-unchanged on the Pi; Docker pulls the arm64 variant.
+pages) and, with one worker, on a [Raspberry Pi 3](#raspberry-pi-3-1-gb).
+Kernels with 16K pages, such as the Raspberry Pi 5 default, are not supported.
+The published image includes arm64, so the commands above work unchanged on the
+Pi; Docker pulls the arm64 variant.
 
 Building on the Pi with `--build` also works, but the first build takes a while,
 mostly to create the wine prefix and to write the image to the SD card.
@@ -204,28 +205,88 @@ are needed:
         start_interval: !reset null
   ```
 
+#### Raspberry Pi 3 (1 GB)
+
+The published arm64 image also runs on a Raspberry Pi 3 Model B (1 GB, Debian 13,
+64-bit kernel, 4K pages, 900 MB zram swap), but only with one worker. Compose
+starts up to 3 workers by default, so set this in `.env`:
+
+```sh
+EBYROID_WORKERS=1
+```
+
+With `--workers 3`, the workers for Aoi and Akane took 43 s and 51 s to start.
+After that, memory and swap were full and the board stopped responding until it
+was power-cycled. With one worker, short sentences are about as fast as on the
+Jetson Nano. However, every voice change reloads the voice library and takes
+about 10 seconds, so the Pi 3 is best used with one voice.
+
+The SD card makes setup slow. The card used here was a 32 GB SDHC card from
+2017 that wrote about 8 MB/s sequentially and 166 KB/s with 4 KB synchronous
+writes. On it, `docker compose pull` took 34 minutes for the 5.6 GB image, and
+copying `AHS/VOICEROID+` (950 MB) took 7 minutes. The board had also reported
+under-voltage (`vcgencmd get_throttled` returned `0x50000`), so a better power
+supply may help a little.
+
 #### arm64 performance
 
-Measured with the same published image on both boards, three VOICEROID+ voices
-(Kiritan, Aoi, Akane) and `--workers 3`, using `POST /api/v2/audiostream` from
-curl inside the container. Times are medians.
+Each board ran [`bench/run.sh`](#running-the-benchmark) with the same published
+image (`sha256:933bbf05…`) and three VOICEROID+ voices (Kiritan, Aoi, Akane).
+curl inside the container sends `POST /api/v2/audiostream`. Times are medians.
+The Pi 4 also ran Pi-hole and another ebyroid during the run.
+
+With `--workers 3` (the Compose default; the Pi 3 does not have enough memory):
 
 | | Raspberry Pi 4 (4 GB) | Jetson Nano (4 GB) |
 | :-- | --: | --: |
-| Container start until healthy (default voice worker ready) | 32 s | 38–44 s |
-| Worker start (first request for another voice) | 16–19 s | 20–27 s |
-| Short sentence (17 characters, about 3.4 s of audio) | 0.18 s | 0.35 s |
-| Long sentence (85 characters, about 15 s of audio) | 0.69 s | 1.5 s |
+| Container start until healthy (default voice worker ready) | 31 s | 37 s |
+| Worker start (first request for another voice) | 18–19 s | 21 s |
+| Short sentence (17 characters, about 3.4 s of audio) | 0.20 s | 0.34 s |
+| Long sentence (85 characters, about 16 s of audio) | 0.69 s | 1.5 s |
 | Time to first audio, long sentence | 0.11 s | 0.21 s |
-| Three voices in parallel, short sentence | 0.23 s, 7.5 requests/s | 0.38 s, 5.6 requests/s |
-| `--workers 1`, extra time per voice change | about 2.6 s | about 2.8 s |
-| Memory, primary process / each worker | 310 MB / 420–430 MB | 310 MB / 430 MB |
+| Three voices in parallel, short sentence | 0.22 s, 6.4 requests/s | 0.36 s, 5.7 requests/s |
+| Memory, primary process / each worker | 310 MB / 420–430 MB | 320 MB / 430–440 MB |
 
-The Pi 4 synthesizes about twice as fast as the Jetson Nano. On both, some short
-requests (about 1 in 5 on the Pi and 1 in 9 on the Jetson) take 0.5–0.7 s
-longer to finish after their first audio arrives, with `--workers 1` as well. Voice changes
-with `--workers 1` reload the voice library and are much slower than on amd64,
-so give each frequently used voice its own worker with `--workers N`.
+With `--workers 1` (Kiritan only, then alternating voices):
+
+| | Raspberry Pi 4 (4 GB) | Jetson Nano (4 GB) | Raspberry Pi 3 (1 GB) |
+| :-- | --: | --: | --: |
+| Container start until healthy | 20 s | 21 s | 43 s |
+| Short sentence (about 3.2 s of audio) | 0.19 s | 0.32 s | 0.35 s |
+| Long sentence (about 15 s of audio), median of 5 and range | 1.2 s (0.68–2.0 s) | 1.5 s (1.4–2.6 s) | 2.1 s (1.6–3.0 s) |
+| Extra time per voice change | 3.2 s | 2.9 s | 9.8 s |
+| Memory | 410 MB | 420 MB | 350 MB |
+
+The Pi 4 synthesizes about twice as fast as the Jetson Nano. On the Pi 4 and
+the Jetson, some requests take 0.5–0.7 s longer to finish after their first
+audio arrives. With `--workers 3`, this happened to 20 of 90 short requests on
+the Pi 4 and 12 of 90 on the Jetson. That is why the long sentences with
+`--workers 1` vary so much: the Pi 4's took either about 0.65 s or about 1.2 s.
+On the Pi 3, part of the process sits in zram, so its memory figure is lower.
+Voice changes with `--workers 1` reload the voice library and are much slower
+than on amd64, so give each frequently used voice its own worker with
+`--workers N` where memory allows.
+
+#### Running the benchmark
+
+`bench/run.sh` measures the numbers above. Run it on the board from the
+repository root, with the three voices configured as in
+`docker/ebyroid.conf.example.json` (`kiritan` as the default, `aoi` and `akane`):
+
+```sh
+bench/run.sh                   # --workers 3, then --workers 1
+bench/run.sh 1                 # --workers 1 only, e.g. on a Raspberry Pi 3
+bench/run.sh -p ebyroid-bench  # next to a copy that is already running
+```
+
+It recreates the container for each worker count, writes the summary and the raw
+timings to `bench/results/`, and finally starts the container again with the
+settings in `.env`. With `-p`, it uses a separate Compose project instead,
+publishes the port only on `127.0.0.1:14090`, and removes the project at the
+end. `VOICEROID_DIR` and `EBYROID_CONFIG` can point at the running copy's files.
+During the Pi 4 run done this way, Pi-hole on the same board kept answering DNS
+queries within 3 ms. The texts are fixed in `bench/requests.sh`, so do not
+change them if you want to compare with the tables above.
 
 
 ## API Endpoints of Standalone Server
@@ -371,7 +432,7 @@ The v2 endpoint improves time to first audio rather than total synthesis time.
 With the native engine's minimum accepted 128 KiB PCM callback buffer, short
 utterances may still fit in one chunk and see little latency improvement.
 
-That said, however, switching voiceroid within one process acquires the inter-thread lock and takes a couple of hundreds of millis (200ms-400ms practically on Windows, about 800ms under wine, and about 3 seconds under wine on a Raspberry Pi 4 or Jetson Nano) by itself. With `--workers 1`, frequent voice changes slow the whole app down; give each frequently used voice its own worker with `--workers N` instead.
+That said, however, switching voiceroid within one process acquires the inter-thread lock and takes a couple of hundreds of millis (200ms-400ms practically on Windows, about 800ms under wine, and about 3 seconds under wine on a Raspberry Pi 4 or Jetson Nano, and about 10 seconds on a Raspberry Pi 3) by itself. With `--workers 1`, frequent voice changes slow the whole app down; give each frequently used voice its own worker with `--workers N` instead.
 
 
 ## License
