@@ -1,0 +1,73 @@
+# 診断用 (Ebycow/ebyroid#8): ubuntu-26.04 のランナーでコンテナ内の wineserver が
+# "socket: Function not implemented" で起動しない原因を切り分ける
+# このブランチへの push でだけ動く。原因が分かったらワークフローごと消す
+name: Diagnose wineserver (#8)
+
+on:
+  push:
+    branches: [diag/ubuntu26-wineserver]
+
+permissions:
+  contents: read
+
+jobs:
+  diag:
+    name: diag (${{ matrix.runner }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-26.04, ubuntu-24.04]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Host
+        run: |
+          set -x
+          uname -a
+          cat /proc/cmdline
+          docker version
+          docker info --format '{{.KernelVersion}} {{.SecurityOptions}} {{.DefaultRuntime}}'
+          runc --version || true
+          grep -E 'CONFIG_(IA32_EMULATION|COMPAT|X86_X32|SECCOMP)' "/boot/config-$(uname -r)" || true
+          aa-status 2>/dev/null | head -5 || true
+
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: .
+          file: docker/Dockerfile
+          platforms: linux/amd64
+          load: true
+          push: false
+          tags: ebyroid-wine:diag
+          cache-from: type=gha,scope=diag
+          cache-to: type=gha,scope=diag,mode=max
+
+      # 結果はすべて表示し、ステップ自体は落とさない
+      - name: wine under different security options
+        run: |
+          try() {
+            echo "::group::$1"
+            shift
+            docker run --rm "$@" --entrypoint /bin/sh ebyroid-wine:diag -c \
+              'timeout 120 xvfb-run -a wine cmd /c echo WINE_OK > /tmp/out.txt 2>&1; code=$?; cat /tmp/out.txt; echo "exit=$code"' || true
+            echo "::endgroup::"
+          }
+          try default
+          try seccomp-unconfined --security-opt seccomp=unconfined
+          try apparmor-unconfined --security-opt apparmor=unconfined
+          try privileged --privileged
+
+      # 既定の seccomp のまま wineserver を strace で追い、ENOSYS を返した syscall を出す
+      - name: strace wineserver
+        run: |
+          docker run --rm --cap-add SYS_PTRACE --entrypoint /bin/sh ebyroid-wine:diag -c '
+            apt-get update -qq && apt-get install -y -qq --no-install-recommends strace >/dev/null
+            timeout 30 strace -f -o /tmp/st wineserver -f -p0 > /tmp/ws.txt 2>&1
+            echo "wineserver exit=$?"; cat /tmp/ws.txt
+            echo "--- ENOSYS"; grep -n ENOSYS /tmp/st | head -40
+            echo "--- socket calls"; grep -nE "socket|pollhup|poll\(" /tmp/st | head -40
+            echo "--- personality / arch"; grep -nE "execve|personality" /tmp/st | head -10
+          ' || true
