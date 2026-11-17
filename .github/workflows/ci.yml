@@ -46,12 +46,16 @@ jobs:
         if: matrix.node == '22'
         run: npm audit --omit=dev || echo "::warning::npm audit found vulnerabilities in production dependencies (see Ebycow/ebyroid#4)"
 
-  # Dockerfile とワークフローの静的チェック、イメージのビルド (push しない)、
-  # wine 上のスモークテスト、脆弱性スキャン
+  # Dockerfile とワークフローの静的チェック、イメージのビルド、
+  # wine 上のスモークテスト、イメージの大きさの確認、脆弱性スキャン
   # arm64 (Hangover + Box64) は QEMU を使わず ARM のランナーでそのままビルドして動かす
+  # 同じリポジトリからの PR では、実機で試せるようにイメージを pr-<番号>-<arch> のタグで push する
   image:
     name: image (${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
     # ビルドが止まったときに 6 時間 (既定) 待たないようにする。キャッシュなしの arm64 でも 30 分あれば終わる見込み
     timeout-minutes: 60
     strategy:
@@ -60,10 +64,13 @@ jobs:
         include:
           # ubuntu-26.04 (ubuntu-latest) の Docker で動かすと、wineserver が
           # "socket: Function not implemented" で起動しないので、24.04 に固定する
+          # max_size_mb: 展開後のイメージの大きさの上限 (MB)。超えたら CI を落とす
           - arch: amd64
             runner: ubuntu-24.04
+            max_size_mb: 2000
           - arch: arm64
             runner: ubuntu-24.04-arm
+            max_size_mb: 2500
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
@@ -96,6 +103,29 @@ jobs:
 
       - run: test/image/smoke.sh ebyroid-wine:ci
 
+      # 展開後の大きさをコンテナの中の du で測る (ハードリンクは 1 回だけ数える)。
+      # docker image inspect の Size は、containerd のイメージストアでは圧縮したレイヤーの分も含むので使わない
+      - name: Image size
+        env:
+          ARCH: ${{ matrix.arch }}
+          MAX_MB: ${{ matrix.max_size_mb }}
+        run: |
+          size=$(docker run --rm --entrypoint du ebyroid-wine:ci -sxb / | cut -f1)
+          mb=$((size / 1000000))
+          {
+            echo "### Image size (linux/$ARCH): $mb MB (limit $MAX_MB MB)"
+            echo
+            echo '| Size | Layer |'
+            echo '| --: | :-- |'
+            docker history --format '{{.Size}}\t{{.CreatedBy}}' ebyroid-wine:ci |
+              awk -F '\t' '$1 != "0B" { c = substr($2, 1, 100); gsub(/\|/, "\\|", c); printf "| %s | `%s` |\n", $1, c }'
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "linux/$ARCH: $mb MB (limit $MAX_MB MB)"
+          if [ "$mb" -gt "$MAX_MB" ]; then
+            echo "::error::The linux/$ARCH image is $mb MB, over the limit of $MAX_MB MB"
+            exit 1
+          fi
+
       # 修正版のある CRITICAL/HIGH を表示する
       # npm の本番依存に修正待ちのもの (Ebycow/ebyroid#4) があるので、今は CI を落とさない
       - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
@@ -105,6 +135,29 @@ jobs:
           severity: CRITICAL,HIGH
           ignore-unfixed: true
           exit-code: '0'
+
+      # フォークからの PR では GITHUB_TOKEN に書き込み権限がないので push しない。
+      # latest やコミット ID のタグには触らない (それは master の publish だけが付ける)
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push the PR image
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          TAG: ghcr.io/ebycow/ebyroid-wine:pr-${{ github.event.pull_request.number }}-${{ matrix.arch }}
+        run: |
+          docker tag ebyroid-wine:ci "$TAG"
+          docker push "$TAG"
+          compressed=$(docker buildx imagetools inspect --raw "$TAG" | jq '[.layers[]?.size] | add // 0')
+          {
+            echo "### Pushed \`$TAG\`"
+            echo
+            echo "Compressed layers: $((compressed / 1000000)) MB. Try it with \`EBYROID_IMAGE=$TAG docker compose up -d\`."
+          } >> "$GITHUB_STEP_SUMMARY"
 
   publish:
     needs: [test, image]

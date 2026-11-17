@@ -48,31 +48,47 @@ COPY package.json npm-shrinkwrap.json ./
 # package.json の os/arch (win32/ia32) チェックと、cmake-js による install ビルドは飛ばす
 RUN npm ci --omit=dev --ignore-scripts --force --no-audit --no-fund
 
-# ---- wine (amd64): Debian の 32bit wine ----
-FROM debian:bookworm-slim AS wine-amd64
-ENV WINEARCH=win32
-RUN dpkg --add-architecture i386 \
- && apt-get update \
- && apt-get install -y --no-install-recommends wine wine32 \
- && rm -rf /var/lib/apt/lists/*
-
-# ---- wine (arm64): Hangover ----
-# 32bit の Windows アプリは 64bit プレフィックスの WoW64 で動く。
-FROM debian:trixie-slim AS wine-arm64
+# ---- Hangover (arm64 の wine) の .deb と、デバッグ情報を落とした wine ----
+# Hangover の Windows 用 DLL (PE) にはデバッグ情報が付いていて、/usr/lib/wine が 2.3GB ある。
+# llvm-strip --strip-debug で 950MB ほどになる (合成した音声はバイト単位で変わらない)。
+# .a は winegcc でリンクするときのライブラリで、実行には使わないので消す。
+# 16bit の DLL (*.dll16 など) は llvm-strip が読めないので、拡張子で PE だけを選ぶ
+FROM --platform=$BUILDPLATFORM debian:trixie-slim AS hangover
 ARG HANGOVER_VERSION
-# SHELL を bash にするとこのあとのステージにも引き継がれ、docker build の RUN で xvfb-run が止まるので、
-# pipefail は使わずに、ファイルに保存してから展開する
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates curl \
- && mkdir /tmp/hangover \
+ && apt-get install -y --no-install-recommends ca-certificates curl llvm-19 \
+ && rm -rf /var/lib/apt/lists/*
+RUN mkdir -p /hangover/debs /hangover/root \
  && curl -fsSLo /tmp/hangover.tar https://github.com/AndreRH/hangover/releases/download/hangover-${HANGOVER_VERSION}/hangover_${HANGOVER_VERSION}_debian13_trixie_arm64.tar \
- && tar -x -C /tmp/hangover -f /tmp/hangover.tar \
+ && tar -x -C /hangover/debs -f /tmp/hangover.tar \
       hangover-wine_${HANGOVER_VERSION}~trixie_arm64.deb \
       hangover-libarm64ecfex_${HANGOVER_VERSION}_arm64.deb \
       hangover-libwow64fex_${HANGOVER_VERSION}_arm64.deb \
       hangover-wowbox64_${HANGOVER_VERSION}_arm64.deb \
- && apt-get install -y --no-install-recommends /tmp/hangover/*.deb \
- && rm -rf /tmp/hangover /tmp/hangover.tar /var/lib/apt/lists/*
+ && rm /tmp/hangover.tar \
+ && for deb in /hangover/debs/*.deb; do dpkg-deb -x "$deb" /hangover/root; done \
+ && find /hangover/root/usr/lib/wine -mindepth 2 -maxdepth 2 -path '*-windows/*' -type f \
+      \( -name '*.dll' -o -name '*.exe' -o -name '*.sys' -o -name '*.drv' -o -name '*.ocx' \
+         -o -name '*.cpl' -o -name '*.acm' -o -name '*.ax' -o -name '*.ds' -o -name '*.com' \
+         -o -name '*.tlb' -o -name '*.msstyles' \) \
+      -exec /usr/lib/llvm-19/bin/llvm-strip --strip-debug {} + \
+ && rm -f /hangover/root/usr/lib/wine/*-windows/*.a
+
+# amd64 は Debian の wine を apt で入れるので、Hangover は使わない (マウントする空のディレクトリだけ)
+FROM --platform=$BUILDPLATFORM debian:bookworm-slim AS hangover-amd64
+RUN mkdir /hangover
+FROM hangover AS hangover-arm64
+# hadolint 2.15 は変数入りのステージ名を解決できないので DL3006 を止める
+# hadolint ignore=DL3006
+FROM hangover-${TARGETARCH} AS hangover-files
+
+# ---- wine (amd64): Debian の 32bit wine ----
+FROM debian:bookworm-slim AS wine-amd64
+ENV WINEARCH=win32
+
+# ---- wine (arm64): Hangover ----
+# 32bit の Windows アプリは 64bit プレフィックスの WoW64 で動く。
+FROM debian:trixie-slim AS wine-arm64
 # x86 のエミュレータ。wowbox64.dll: Box64 / libwow64fex.dll: FEX
 # FEX (Hangover 11.16) では、プライマリが転送したあとに次のワーカーを起動すると
 # プライマリの node.exe がアクセス違反で落ちる。Box64 ではこれが起きず、合成も速い (Pi 4 で 1 文 0.3 秒ほど)
@@ -83,6 +99,7 @@ ENV HODLL=wowbox64.dll
 # hadolint ignore=DL3006
 FROM wine-${TARGETARCH}
 ARG NODE_VERSION
+ARG TARGETARCH
 
 ENV DEBIAN_FRONTEND=noninteractive \
     LANG=ja_JP.UTF-8 \
@@ -97,11 +114,27 @@ RUN apt-get update \
  && sed -i 's/^# *ja_JP.UTF-8/ja_JP.UTF-8/' /etc/locale.gen && locale-gen \
  && rm -rf /var/lib/apt/lists/*
 
-# プレフィックスを作る (amd64 は 32bit、arm64 は 64bit の WoW64)
+# wine を入れて、プレフィックスを作る (amd64 は 32bit、arm64 は 64bit の WoW64)
 # (VOICEROID+ 側の msvcr100/msvcp100 はインストールディレクトリに同梱されている)
 # win32 プレフィックスの既定は Windows 7 で、Node.js 22 は 8.1 未満だと起動しないので Windows 10 にする
 # mscoree/mshtml を無効にして、Wine Mono / Gecko のインストール確認ダイアログで止まらないようにする (node も VOICEROID も使わない)
-RUN WINEDLLOVERRIDES='mscoree,mshtml=' xvfb-run -a sh -c 'wineboot --init && winecfg /v win10 && wineserver -w'
+# wineboot は wine の DLL をそのままプレフィックスへコピーするので、同じ中身のものは元のファイルへのハードリンクにする。
+# wine を入れる RUN とプレフィックスを作る RUN が分かれていると、ハードリンクにしても別々のレイヤーに 2 回入るので、1 つの RUN で行う
+RUN --mount=type=bind,from=hangover-files,source=/hangover,target=/hangover \
+    --mount=type=bind,source=docker/dedupe-prefix.sh,target=/tmp/dedupe-prefix.sh \
+    case "$TARGETARCH" in \
+      amd64) dpkg --add-architecture i386 \
+          && apt-get update \
+          && apt-get install -y --no-install-recommends wine wine32 ;; \
+      arm64) apt-get update \
+          && apt-get install -y --no-install-recommends /hangover/debs/*.deb \
+          && cp -a /hangover/root/usr/lib/wine/. /usr/lib/wine/ \
+          && rm -f /usr/lib/wine/*-windows/*.a ;; \
+      *) echo "unsupported architecture: $TARGETARCH" >&2; exit 1 ;; \
+    esac \
+ && rm -rf /var/lib/apt/lists/* \
+ && WINEDLLOVERRIDES='mscoree,mshtml=' xvfb-run -a sh -c 'wineboot --init && winecfg /v win10 && wineserver -w' \
+ && sh /tmp/dedupe-prefix.sh "$WINEPREFIX"
 
 # Windows 版 node.exe (ia32)
 RUN curl -fsSLo /tmp/node.zip https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-win-x86.zip \
