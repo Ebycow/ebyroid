@@ -151,7 +151,7 @@ so `baseDirPath` in `docker/ebyroid.conf.json` must look like
 `--workers` (3 by default here). `EBYROID_WORKER_IDLE_TIMEOUT_MS` sets
 `--worker-idle-timeout-ms`.
 
-Compose uses the prebuilt image `ghcr.io/ebycow/ebyroid-wine` (amd64), published
+Compose uses the prebuilt image `ghcr.io/ebycow/ebyroid-wine` (amd64 and arm64), published
 on every push to master and tagged `latest` and with the full commit ID. It
 does not contain any VOICEROID files; they and the config are mounted as above.
 
@@ -165,6 +165,25 @@ to `bin/`, `lib/` or `index.js` only rebuild the last layer, so this takes a few
 seconds. On a machine that also runs another copy, set
 `EBYROID_IMAGE=ebyroid-wine:dev` in `.env` so the build does not replace the
 other copy's image.
+
+#### Raspberry Pi (linux/arm64)
+
+The same Dockerfile builds an arm64 image. It uses
+[Hangover](https://github.com/AndreRH/hangover), a wine for ARM64, and runs the
+32-bit `node.exe` and the VOICEROID libraries through Box64 inside a 64-bit
+(WoW64) prefix. This was tested on a Raspberry Pi 4 (4 GB, Debian 13, 4K
+pages). Kernels with 16K pages, such as the Raspberry Pi 5 default, are not
+supported. The published image includes arm64, so the commands above work
+unchanged on the Pi; Docker pulls the arm64 variant.
+
+Building on the Pi with `--build` also works, but the first build takes a while,
+mostly to create the wine prefix and to write the image to the SD card.
+On a Pi 4 a worker starts in about 16 seconds, and a short
+sentence takes about 0.3 seconds once its worker is running. Three workers with
+three VOICEROID+ voices use about 1.7 GB of memory (about 300 MB for the
+primary process and 430 MB per worker). `HODLL=libwow64fex.dll`
+switches the emulator to FEX, but with FEX the primary process crashed when it
+started a worker after forwarding a request.
 
 Node.js under wine cannot write to a Unix pipe, so the container writes the
 server log to a file and streams it to `docker compose logs`.

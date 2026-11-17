@@ -48,17 +48,33 @@ jobs:
 
   # Dockerfile とワークフローの静的チェック、イメージのビルド (push しない)、
   # wine 上のスモークテスト、脆弱性スキャン
+  # arm64 (Hangover + Box64) は QEMU を使わず ARM のランナーでそのままビルドして動かす
   image:
-    runs-on: ubuntu-latest
+    name: image (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    # ビルドが止まったときに 6 時間 (既定) 待たないようにする。キャッシュなしの arm64 でも 30 分あれば終わる見込み
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # ubuntu-26.04 (ubuntu-latest) の Docker で動かすと、wineserver が
+          # "socket: Function not implemented" で起動しないので、24.04 に固定する
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: actionlint
+        if: matrix.arch == 'amd64'
         run: |
           bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/03d0035246f3e81f36aed592ffb4bebf33a03106/scripts/download-actionlint.bash) 1.7.7
           ./actionlint -color
 
       - uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387 # v3.5.0
+        if: matrix.arch == 'amd64'
         with:
           dockerfile: docker/Dockerfile
           config: .hadolint.yaml
@@ -66,16 +82,17 @@ jobs:
 
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
 
+      # キャッシュはアーキテクチャごとに分ける (publish.yml と同じ scope にして共有する)
       - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: .
           file: docker/Dockerfile
-          platforms: linux/amd64
+          platforms: linux/${{ matrix.arch }}
           load: true
           push: false
           tags: ebyroid-wine:ci
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=image-${{ matrix.arch }}
+          cache-to: type=gha,scope=image-${{ matrix.arch }},mode=max
 
       - run: test/image/smoke.sh ebyroid-wine:ci
 
