@@ -1,5 +1,6 @@
 # 診断用: arm64 のイメージのビルドが GitHub の ARM ランナーで終わらない原因を調べる (Ebycow/ebyroid#7)
-# (#8 の診断は run 43989988126 / 43991301343 で済んだ)
+# wineboot の RUN で xvfb-run と Xvfb が CPU 0 のまま止まり、wine は起動していなかった (run 43994741622)
+# ここでは wine を使わず、xvfb-run / Xvfb だけで再現するかを見る
 # このブランチへの push でだけ動く。原因が分かったらワークフローごと消す
 name: Diagnose arm64 build
 
@@ -11,41 +12,51 @@ permissions:
   contents: read
 
 jobs:
-  arm64-build:
-    runs-on: ubuntu-24.04-arm
-    timeout-minutes: 40
+  xvfb:
+    name: xvfb (${{ matrix.runner }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04-arm, ubuntu-24.04]
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-
       - name: Host
         run: |
           uname -a
-          getconf PAGESIZE
-          nproc
-          free -h
-          lscpu | grep -E 'Model name|Vendor|Flags' | cut -c1-200
           docker version --format '{{.Server.Version}}'
+          systemctl show docker containerd -p LimitNOFILE
 
-      # docker ドライバーでビルドするので、RUN の中のプロセスはホストの ps に見える
-      - name: Build with plain progress (gives up after 20 minutes)
+      - name: Build small images with Xvfb
         run: |
-          set +e
-          DOCKER_BUILDKIT=1 docker build --progress=plain --platform linux/arm64 \
-            -f docker/Dockerfile -t ebyroid-wine:diag . > build.log 2>&1 &
-          pid=$!
-          for i in $(seq 1 40); do
-            sleep 30
-            kill -0 "$pid" 2>/dev/null || break
-            echo "--- $((i * 30))s: $(tail -n 1 build.log | cut -c1-200)"
+          for d in trixie bookworm; do
+            printf 'FROM debian:%s-slim\nRUN apt-get update && apt-get install -y --no-install-recommends xvfb xauth strace procps && rm -rf /var/lib/apt/lists/*\n' "$d" |
+              docker build -q -t "xvfb:$d" -
           done
-          if kill -0 "$pid" 2>/dev/null; then
-            echo "::warning::build still running after 20 minutes"
-            echo "::group::processes"
-            ps -eo pid,ppid,etime,time,stat,args --forest | grep -vE '\[.*\]$' | cut -c1-220 | tail -n 80
+
+      # 結果はすべて表示し、ステップ自体は落とさない
+      - name: xvfb-run under different settings
+        run: |
+          try() {
+            name=$1; shift
+            echo "::group::$name"
+            start=$(date +%s)
+            docker run --rm "$@" sh -c 'echo "nofile=$(ulimit -n)/$(ulimit -Hn)"; timeout 60 xvfb-run -a sh -c "echo XVFB_OK"; echo "exit=$?"' || true
+            echo "took $(( $(date +%s) - start ))s"
             echo "::endgroup::"
-            kill "$pid"
-          fi
-          wait "$pid"; echo "build exit=$?"
-          echo "::group::build log (last 150 lines)"
-          tail -n 150 build.log
-          echo "::endgroup::"
+          }
+          for d in trixie bookworm; do
+            try "$d default" "xvfb:$d"
+            try "$d nofile=1024" --ulimit nofile=1024:1024 "xvfb:$d"
+            try "$d init" --init "xvfb:$d"
+          done
+
+      # Xvfb を直接起動し、どこで止まるかを strace で見る
+      - name: strace Xvfb startup (trixie)
+        run: |
+          docker run --rm --cap-add SYS_PTRACE xvfb:trixie sh -c '
+            timeout 20 strace -f -tt -o /tmp/st Xvfb :5 -screen 0 1280x1024x24 -nolisten tcp > /tmp/x.log 2>&1
+            echo "Xvfb exit=$?"; cat /tmp/x.log
+            echo "--- last 40 syscalls"; tail -n 40 /tmp/st | cut -c1-200
+            echo "--- blocking calls"; grep -nE "futex|poll|select|epoll_wait|read\(|connect|getrandom|nanosleep" /tmp/st | tail -n 15 | cut -c1-200
+          ' || true
