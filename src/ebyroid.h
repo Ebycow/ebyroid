@@ -45,9 +45,13 @@ class Ebyroid {
   ApiAdapter* api_adapter_;
 };
 
+// Which callback's *_CLOSE event finishes a job.
+// A speech job also gets TEXTBUF_CLOSE, just before RAWBUF_CLOSE; it must wait for the latter.
+enum class JobKind { kKana, kSpeech };
+
 class Response {
  public:
-  explicit Response(ApiAdapter* adapter, SpeechChunkCallback on_chunk = nullptr);
+  Response(ApiAdapter* adapter, JobKind kind, SpeechChunkCallback on_chunk = nullptr);
   ~Response();
   void Write(char* bytes, uint32_t size);
   void Write16(int16_t* shorts, uint32_t size);
@@ -56,9 +60,11 @@ class Response {
   void WaitForCompletion();
   bool SignalCompletion();
   ApiAdapter* api_adapter() { return api_adapter_; };
+  JobKind kind() const { return kind_; };
 
  private:
   ApiAdapter* api_adapter_;
+  JobKind kind_;
   void* completion_event_;
   std::vector<unsigned char> buffer_;
   std::vector<int16_t> buffer_16_;
