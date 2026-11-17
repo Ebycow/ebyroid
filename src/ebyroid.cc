@@ -40,7 +40,7 @@ int Ebyroid::Hiragana(const unsigned char* inbytes, unsigned char** outbytes, si
   if (api_adapter_ == nullptr) {
     throw std::runtime_error("VOICEROID API is not initialized");
   }
-  std::unique_ptr<Response> response(new Response(api_adapter_));
+  std::unique_ptr<Response> response(new Response(api_adapter_, JobKind::kKana));
 
   TJobParam param;
   param.mode_in_out = IOMODE_PLAIN_TO_AIKANA;
@@ -78,7 +78,7 @@ int Ebyroid::Speech(const unsigned char* inbytes,
   if (api_adapter_ == nullptr) {
     throw std::runtime_error("VOICEROID API is not initialized");
   }
-  std::unique_ptr<Response> response(new Response(api_adapter_));
+  std::unique_ptr<Response> response(new Response(api_adapter_, JobKind::kSpeech));
 
   TJobParam param;
   param.mode_in_out = mode == 0u ? IOMODE_AIKANA_TO_WAVE : (JobInOut) mode;
@@ -115,7 +115,7 @@ int Ebyroid::SpeechStream(const unsigned char* inbytes,
   if (api_adapter_ == nullptr) {
     throw std::runtime_error("VOICEROID API is not initialized");
   }
-  std::unique_ptr<Response> response(new Response(api_adapter_, on_chunk));
+  std::unique_ptr<Response> response(new Response(api_adapter_, JobKind::kSpeech, on_chunk));
 
   TJobParam param;
   param.mode_in_out = mode == 0u ? IOMODE_AIKANA_TO_WAVE : (JobInOut) mode;
@@ -163,8 +163,9 @@ int Ebyroid::ConvertStream(const ConvertParams& params,
   return SpeechStream(inbytes, on_chunk, IOMODE_PLAIN_TO_WAVE);
 };
 
-Response::Response(ApiAdapter* adapter, SpeechChunkCallback on_chunk)
+Response::Response(ApiAdapter* adapter, JobKind kind, SpeechChunkCallback on_chunk)
     : api_adapter_(adapter),
+      kind_(kind),
       completion_event_(CreateEventA(NULL, TRUE, FALSE, NULL)),
       on_chunk_(std::move(on_chunk)) {
   if (completion_event_ == NULL) {
@@ -321,7 +322,12 @@ int __stdcall HiraganaCallback(EventReasonCode reason_code, int32_t job_id, IntP
   }
   delete[] buffer;
 
-  if (reason_code == TEXTBUF_CLOSE) {
+  // A speech job (IOMODE_PLAIN_TO_WAVE) gets TEXTBUF_CLOSE right before RAWBUF_CLOSE.
+  // Waking the caller here lets CloseSpeech race the RAWBUF_CLOSE callback: when the
+  // callback is already in GetData, both block inside the engine for about 0.7 s
+  // (seen under wine + Box64 on a Raspberry Pi 4 and a Jetson Nano). So only a kana
+  // job finishes here; a speech job finishes in SpeechCallback.
+  if (reason_code == TEXTBUF_CLOSE && response->kind() == JobKind::kKana) {
     if (!response->SignalCompletion()) {
       Eprintf("SetEvent failed with code %d", GetLastError());
     }
