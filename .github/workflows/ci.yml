@@ -56,8 +56,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # ubuntu-26.04 (ubuntu-latest) の Docker で動かすと、wineserver が
+          # "socket: Function not implemented" で起動しないので、24.04 に固定する
           - arch: amd64
-            runner: ubuntu-latest
+            runner: ubuntu-24.04
           - arch: arm64
             runner: ubuntu-24.04-arm
     steps:
