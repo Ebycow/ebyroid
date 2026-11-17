@@ -60,6 +60,19 @@ jobs:
           try apparmor-unconfined --security-opt apparmor=unconfined
           try privileged --privileged
 
+      # Docker 29.4.2 の既定プロファイルだけ socketcall を ENOSYS で拒否している (29.4.3 で元に戻った)
+      # 32bit の glibc は socket/socketpair を socketcall で呼ぶので、プロファイルを入れ替えて確かめる
+      - name: wine with the seccomp profiles of Docker 29.4.2 and 29.9.3
+        run: |
+          for v in 29.4.2 29.9.3; do
+            curl -fsSLo "seccomp-$v.json" \
+              "https://raw.githubusercontent.com/moby/moby/docker-v$v/vendor/github.com/moby/profiles/seccomp/default.json"
+            echo "::group::profile of Docker $v (socketcall: $(jq -c '[.syscalls[] | select(.names | index("socketcall")) | .action]' "seccomp-$v.json"))"
+            docker run --rm --security-opt "seccomp=$PWD/seccomp-$v.json" --entrypoint /bin/sh ebyroid-wine:diag -c \
+              'timeout 120 xvfb-run -a wine cmd /c echo WINE_OK > /tmp/out.txt 2>&1; code=$?; cat /tmp/out.txt; echo "exit=$code"' || true
+            echo "::endgroup::"
+          done
+
       # 既定の seccomp のまま wineserver を strace で追い、ENOSYS を返した syscall を出す
       - name: strace wineserver
         run: |
