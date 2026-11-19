@@ -366,6 +366,11 @@ starts a chunked PCM response as soon as the native engine emits audio.
 `text` is required. `name` is optional and selects the configured voice. The
 maximum JSON request-body size is 64 KiB.
 
+A `name` that is not in the config is answered with `404` and
+`{"error": "unknown voice: <name>"}` on every synthesis endpoint (v1 and v2).
+It is the client's mistake, not a server failure, so gateways such as ttshub do
+not take the server out of rotation for it.
+
 The response content type, PCM headers, and raw PCM format are the same as
 `GET /api/v1/audiostream`. The response uses HTTP chunked transfer rather than
 waiting for the complete speech buffer. The legacy v1 endpoints remain

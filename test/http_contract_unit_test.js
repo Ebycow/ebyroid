@@ -301,6 +301,34 @@ const CASES = [
     },
   },
 
+  // 設定にない話者はクライアントの誤りなので 404 (5xx だと ttshub などの前段がサーバーごと切り離す)
+  {
+    name: 'POST /api/v2/audiostream with an unknown voice is 404',
+    send: port => postJson(port, { text: 'a', name: 'nobody' }),
+    check: res => {
+      assert.equal(res.status, 404);
+      assert.deepEqual(json(res), { error: 'unknown voice: nobody' });
+    },
+  },
+  {
+    name: 'GET /api/v1/audiostream with an unknown voice is 404',
+    send: port =>
+      request(port, { path: `/api/v1/audiostream?text=${q('a')}&name=nobody` }),
+    check: res => {
+      assert.equal(res.status, 404);
+      assert.deepEqual(json(res), { error: 'unknown voice: nobody' });
+    },
+  },
+  {
+    name: 'GET /api/v1/audiofile with an unknown voice is 404',
+    send: port =>
+      request(port, { path: `/api/v1/audiofile?text=${q('a')}&name=nobody` }),
+    check: res => {
+      assert.equal(res.status, 404);
+      assert.deepEqual(json(res), { error: 'unknown voice: nobody' });
+    },
+  },
+
   // ネイティブ側の失敗 (偽のネイティブは本文の目印で失敗する)
   {
     name: 'a native exception is 500',
